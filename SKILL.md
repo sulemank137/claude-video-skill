@@ -257,6 +257,48 @@ the chart's window so the line spans it instead of spiking at "now".
 * Keep captions clear of the frame edge: a 52 px title at y=968 with a subtitle
   under it is already cut off at 1080.
 
+### Motion: judder, stepping, and one-frame jolts
+Three defects that all read as "the transitions are not smooth", with three
+different causes:
+
+* **Judder from stretched plates.** A 60-frame capture shown across a 185-frame
+  beat repeats each captured frame three times. Index plates FRACTIONALLY —
+  `i * (len(seq(name)) - 1) / (n - 1)` — and blend the two neighbours;
+  `promo_kit.frame_at()` does the blend for you.
+* **Stepping from integer geometry.** A 40 px push-in over 150 frames moves
+  0.27 px per frame, so pasting at integer coordinates stair-steps every few
+  frames. Scale on a float and place on a float; `promo_kit` resamples through
+  one affine op so slow moves glide.
+* **Jolts from captured state changes.** A theme swap or page switch that
+  happens between two captured frames lands as a single-frame jump. Ease it
+  across ~8 frames by blending the plate frames either side of it, and
+  cross-dissolve wherever two halves of a beat meet rather than cutting.
+
+Verify with `scripts/check_flicker.py FRAMES` (no `--box` = whole frame): it
+reports repeated frames, jolts and A-B-A oscillation in one pass. Judge repeats
+on the MAX pixel delta, not the mean — a title card with a slow background has a
+near-zero mean diff and is not a repeated frame at all.
+
+### Score
+`scripts/score.py` synthesises an original cue at the film's exact length:
+
+    score.py --seconds 63.4 --bpm 118 --energy drive --out score.wav
+
+Written rather than downloaded on purpose — an original cue has no licence
+question, no attribution line, and no "royalty free" claim to verify — and it
+can be written to the edit instead of the edit being cut to a track. Sections
+scale with `--seconds`: pad-only intro, arpeggio in early, drums in at ~19 %,
+riser before the end, drums out for the closing card.
+
+Energy is structural, not a mix decision: `--energy calm` is a half-time kick
+and no bass pulse; `--energy drive` is four-on-the-floor, an eighth-note bass,
+claps on 2 and 4 and sixteenth hats. If a cue "feels too calm", the fix is the
+arrangement and where the drums enter — not the volume.
+
+Mux with `loudnorm`, and check the result: `-15 LUFS` integrated with true peak
+under `-1.5 dBTP` sits right for a music-only promo (`ffmpeg -i out.mp4 -af
+loudnorm=print_format=summary -f null /dev/null`).
+
 ### Ship light and dark from one compositor
 Take the palettes from the product's own theme table (`--palette theme.json`),
 parameterise the film with `--theme`, and capture one plate set per theme. Dark

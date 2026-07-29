@@ -111,14 +111,30 @@ def seq(name):
     return _seq_cache[name]
 
 
-def frame_at(name, i):
-    files = seq(name)
-    p = files[max(0, min(len(files) - 1, int(i)))]
-    if p not in _img_cache:
+def _load(path):
+    if path not in _img_cache:
         if len(_img_cache) > 40:               # plates are big; cap the cache
             _img_cache.clear()
-        _img_cache[p] = Image.open(p).convert("RGBA")
-    return _img_cache[p]
+        _img_cache[path] = Image.open(path).convert("RGBA")
+    return _img_cache[path]
+
+
+def frame_at(name, i):
+    """A plate frame at a FRACTIONAL index.
+
+    A 60-frame capture stretched over a 185-frame beat otherwise shows each
+    captured frame three times, which reads as judder. Blending the two
+    neighbours turns the repeat into continuous motion, so always index a plate
+    as `i * (len(seq(name)) - 1) / (n - 1)` rather than with an int."""
+    files = seq(name)
+    last = len(files) - 1
+    i = max(0.0, min(float(last), float(i)))
+    lo = int(i)
+    frac = i - lo
+    a = _load(files[lo])
+    if frac < 0.02 or lo >= last:
+        return a
+    return Image.blend(a, _load(files[lo + 1]), frac)
 
 
 # ── easing ────────────────────────────────────────────────────────────────────
@@ -251,6 +267,13 @@ def paste_card(img, im, x, y, radius=16, alpha=1.0, shadow=28, lift=14,
     if alpha <= 0.01:
         return
     im = im.convert("RGBA")
+    # sub-pixel placement: a 40 px push over 150 frames moves 0.27 px/frame, and
+    # pasting at integer coordinates turns that into a visible stair-step
+    fx, fy = x - math.floor(x), y - math.floor(y)
+    if fx > 0.02 or fy > 0.02:
+        im = im.transform(im.size, Image.AFFINE, (1, 0, -fx, 0, 1, -fy),
+                          resample=Image.BICUBIC)
+        x, y = math.floor(x), math.floor(y)
     m = _rounded_mask(im.size, radius)
     if alpha < 1.0:
         m = m.point(lambda v: int(v * alpha))
@@ -289,11 +312,16 @@ def plate(name, i, width=None, height=None, box=None, zoom=1.0):
         z = im.resize((int(im.width * zoom), int(im.height * zoom)), Image.LANCZOS)
         l, t = (z.width - im.width) // 2, (z.height - im.height) // 2
         im = z.crop((l, t, l + im.width, t + im.height))
+    # scale on a float and resample in one affine op, so a slow zoom ramps
+    # smoothly instead of jumping a whole pixel every few frames
+    if height and not width:
+        width = im.width * height / im.height
     if width:
-        height = height or int(im.height * width / im.width)
-        im = im.resize((width, height), Image.LANCZOS)
-    elif height:
-        im = im.resize((int(im.width * height / im.height), height), Image.LANCZOS)
+        height = height or im.height * width / im.width
+        w_i, h_i = max(1, int(round(width))), max(1, int(round(height)))
+        im = im.transform((w_i, h_i), Image.AFFINE,
+                          (im.width / width, 0, 0, 0, im.height / height, 0),
+                          resample=Image.BICUBIC)
     return im
 
 

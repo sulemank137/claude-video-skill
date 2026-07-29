@@ -33,8 +33,8 @@ def b_app(i, n, g):
     img = background(g)
     t = i / n
     a = ease(i / 20.0)
-    wid = int(1500 + 40 * ease(t))
-    p = plate("app", i, width=wid)
+    wid = 1500 + 40 * ease(t)                 # float: the zoom ramps smoothly
+    p = plate("app", i * (len(seq("app")) - 1) / max(1, n - 1), width=wid)
     paste_card(img, p, W / 2 - p.width / 2, 74 - int(14 * ease(t)), radius=12,
                alpha=a)
     caption(img, t, "ONE APP, THE WHOLE LOOP",
@@ -47,9 +47,12 @@ def b_panel(i, n, g):
     its progress bars are present and its layout cannot shift under a crop."""
     img = background(g)
     t = i / n
-    card(img, "panel", i, 110, 300, 900, alpha=ease(i / 18.0))
+    # index plates FRACTIONALLY across the beat: a 60-frame capture shown over
+    # 150 frames would otherwise repeat every frame 2-3 times and judder
+    fi = i * (len(seq("panel")) - 1) / max(1, n - 1)
+    card(img, "panel", fi, 110, 300, 900, alpha=ease(i / 18.0))
     fa = ease((i - 14) / 22.0)
-    fp = plate("footage", i, width=700)
+    fp = plate("footage", i * (len(seq("footage")) - 1) / max(1, n - 1), width=700)
     paste_card(img, fp, 1096, 330 + int(30 * (1 - fa)), radius=14, alpha=fa)
     chip(img, 1096, 330 + fp.height + 26, "LIVE  ·  30 Hz", P["ACCENT"],
          alpha=ease((i - 40) / 20.0))

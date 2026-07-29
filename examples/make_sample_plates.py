@@ -3,7 +3,9 @@
 
     python examples/make_sample_plates.py            # -> examples/plates/*
 """
+import math
 import os
+
 from PIL import Image, ImageDraw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -24,7 +26,8 @@ def main():
                     fill=(20, 24, 40))
             w = int(size[0] * 0.2 + size[0] * 0.6 * i / n)      # a moving bar
             dr.rectangle([24, size[1] - 60, w, size[1] - 30], fill=(60, 120, 220))
-            cx, cy = size[0] // 2, size[1] // 2 + i * 2          # and a mover
+            cx = size[0] // 2 + int(size[0] * 0.22 * math.sin(i / 9.0))
+            cy = size[1] // 2 + i * 6                            # and a mover
             dr.ellipse([cx - 40, cy - 40, cx + 40, cy + 40], fill=(120, 170, 240))
             im.save(os.path.join(d, f"{i:05d}.png"))
         print(f"{name}: {n} frames at {size[0]}x{size[1]}")

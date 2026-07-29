@@ -67,8 +67,15 @@ python scripts/plates.py clips.json --src-dir footage --out plates
 python film.py --theme light --plates plates --out frames/light
 ./scripts/encode.sh frames/light promo_light.mp4
 
-# 4. prove the panels animate instead of flickering
-python scripts/check_flicker.py frames/light --box 110,300,1010,640
+# 4. add an original score, cut to the film's length
+python scripts/score.py --seconds 63.4 --bpm 118 --energy drive --out score.wav
+ffmpeg -i promo_light.mp4 -i score.wav \
+  -filter_complex "[1:a]loudnorm=I=-15:TP=-1.5:LRA=9[a]" \
+  -map 0:v -map "[a]" -c:v copy -c:a aac -b:a 192k -shortest final.mp4
+
+# 5. prove it is smooth: no flicker, no judder, no one-frame jolts
+python scripts/check_flicker.py frames/light                       # whole frame
+python scripts/check_flicker.py frames/light --box 110,300,1010,640  # one panel
 ```
 
 Try it with no assets of your own:
@@ -89,7 +96,8 @@ python examples/film_example.py --plates examples/plates --out /tmp/frames
 | `scripts/capture_ui.py` | Mode B: capture a UI as PNG frames — `qt`, `web`, `x11` backends |
 | `scripts/plates.py` | cut footage into plates at the exact size the layout uses |
 | `scripts/promo_kit.py` | PIL toolkit: palettes, background, cards, captions, chips, wipes, beat timeline, CLI |
-| `scripts/check_flicker.py` | numeric A-B-A oscillation check on a rendered panel |
+| `scripts/score.py` | synthesise an original, licence-free cue at the film's exact length |
+| `scripts/check_flicker.py` | numeric smoothness audit: flicker, judder, one-frame jolts |
 | `scripts/encode.sh` | PNG sequence → H.264 at sane settings |
 | `examples/` | a runnable 4-beat film, driver examples, clip/palette configs, sample-plate generator |
 
@@ -109,6 +117,12 @@ and wrong in motion:
   capture at display aspect (1920x1080 @1.25x).
 - **Cross-dissolving two text screenshots** (two languages, two themes) is
   unreadable → wipe or cut.
+- **A short plate stretched over a long beat** repeats each frame two or three
+  times and judders → index plates fractionally and blend the neighbours.
+- **Integer pasting of a slow push-in** stair-steps at ~0.3 px/frame → scale and
+  place on floats, resampled in one affine op.
+- **A captured state change** (theme swap, page switch) lands in a single frame
+  and jolts → ease it across ~8 frames.
 - **Starting a shot already zoomed in** reads as if the opening was clipped off
   → push in from the wide frame.
 - Overlapping source-time trims in one ffmpeg graph silently produce a
