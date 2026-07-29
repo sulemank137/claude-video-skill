@@ -1,0 +1,7 @@
+[
+  {"name": "footage", "src": "lab.mp4", "start": 59.5, "dur": 7.2,
+   "w": 1180, "h": 664, "crop": "1280:720:0:0"},
+  {"name": "tool", "src": "phone.mp4", "start": 336.0, "dur": 5.2,
+   "w": 560, "h": 640, "crop": "700:800:10:300",
+   "grade": "eq=contrast=1.12:brightness=0.06:saturation=1.05"}
+]

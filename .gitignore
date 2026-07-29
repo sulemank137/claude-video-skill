@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+frames*/
+plates/
+*.mp4
+examples/plates/
+.DS_Store
