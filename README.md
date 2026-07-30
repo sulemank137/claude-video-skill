@@ -95,11 +95,53 @@ python examples/film_example.py --plates examples/plates --out /tmp/frames
 | `scripts/build_promo.py` | Mode A: JSON → ffmpeg `filter_complex` → cut film |
 | `scripts/capture_ui.py` | Mode B: capture a UI as PNG frames — `qt`, `web`, `x11` backends |
 | `scripts/plates.py` | cut footage into plates at the exact size the layout uses |
-| `scripts/promo_kit.py` | PIL toolkit: palettes, background, cards, captions, chips, wipes, beat timeline, CLI |
+| `scripts/promo_kit.py` | PIL toolkit: palettes, background, cards, captions, chips, effects, seam transitions, beat timeline, CLI |
 | `scripts/score.py` | synthesise an original, licence-free cue at the film's exact length |
 | `scripts/check_flicker.py` | numeric smoothness audit: flicker, judder, one-frame jolts |
 | `scripts/encode.sh` | PNG sequence → H.264 at sane settings |
-| `examples/` | a runnable 4-beat film, driver examples, clip/palette configs, sample-plate generator |
+| `examples/` | a runnable 5-beat film, driver examples, clip/palette configs, sample-plate generator |
+
+### Finish, beyond the layout
+
+`promo_kit` covers the page; these cover the polish that separates a slide deck
+from a film. All of them work in both themes, and all are written to stay cheap —
+each caches its expensive part or paints at a fraction of full resolution,
+because a full-size Gaussian per frame is what turns a 2000-frame render into an
+hour.
+
+| call | what it is for |
+|---|---|
+| `glass(img, box, accent=…)` | frosted panel of whatever is behind it — a caption stays readable over a busy UI plate without a flat slab covering it |
+| `sheen(img, x, y, w, h, prog)` | specular band sweeping once across a card as it lands; `card(..., shine=ramp)` wires it up |
+| `brackets()` / `scanbar()` | viewfinder corners and a travelling scan line: tells the eye this plate is camera and that one is UI |
+| `backdrop(img, plate, g)` | blurred, slowly drifting copy of a plate behind the cards — depth for free |
+| `pulse(img, g)` | vignette breathing on the musical beat; set `--bpm` to the score's tempo |
+| `chroma(img, amt)` | channel split for a handful of frames at a hard landing, never continuous |
+| `flow_dots(img, pts, g)` | dots running a polyline — data moving through a pipeline diagram |
+| `transition(a, b, t, kind)` | `dissolve` / `wipe` / `flash` on a seam; name it as a 4th item on a beat |
+| `fit_font(role, text, size, limit)` | largest size at which a label actually fits its box |
+| `tracked_text(..., prog=, stagger=)` | per-character kinetic type that does not reflow as it lands |
+
+Name a transition on the beats that start a new section and let the rest
+dissolve:
+
+```python
+BEATS = [
+    ("title", b_title, 90),
+    ("loop",  b_loop, 210, "flash"),   # how THIS beat arrives
+    ("app",   b_app, 140, "wipe"),
+    ("panel", b_panel, 150),           # "dissolve" is the default
+]
+```
+
+Then align the music to the actual edit instead of to guessed fractions:
+
+```bash
+python film.py --map          # prints every beat's start in seconds
+python scripts/score.py --seconds 75.0 \
+    --cue arp=2.9,drums=7.8,hats16=41.8,riser=67.8 \
+    --fills 7.6,14.8,25.0,41.6,52.4,64.0 --out score.wav
+```
 
 ## The failure modes it encodes
 
@@ -117,6 +159,15 @@ and wrong in motion:
   capture at display aspect (1920x1080 @1.25x).
 - **Cross-dissolving two text screenshots** (two languages, two themes) is
   unreadable → wipe or cut.
+- **Cross-dissolving every seam** makes a film read as one long even wash with no
+  structure → name `wipe`/`flash` on the beats that open a section.
+- **`from promo_kit import P`** used to freeze the light palette at import time,
+  so a film's own `P[...]` draws stayed light in `--theme dark` while text drawn
+  inside the kit followed the flag. `P` is now mutated in place, never rebound.
+- **Per-character kinetic type** with `stagger * len(text) + 0.22 > 1.0` settles
+  with its last letters permanently half-lit — the ramp never completes.
+- **Labels laid into fixed-width boxes** overflow silently as soon as the string
+  is not the one you designed for → `fit_font()`.
 - **A short plate stretched over a long beat** repeats each frame two or three
   times and judders → index plates fractionally and blend the neighbours.
 - **Integer pasting of a slow push-in** stair-steps at ~0.3 px/frame → scale and

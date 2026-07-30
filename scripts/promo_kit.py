@@ -39,17 +39,21 @@ import json
 import math
 import os
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 __all__ = [
     "W", "H", "FPS", "XF", "P", "THEME", "ease", "ease_out", "fade",
-    "background", "tracked_text", "paste_card", "plate", "card", "caption",
-    "chip", "wordmark", "font", "seq", "frame_at", "run",
+    "background", "tracked_text", "fit_font", "paste_card", "plate", "card",
+    "caption", "chip", "wordmark", "font", "seq", "frame_at", "run",
+    "glass", "sheen", "brackets", "scanbar", "backdrop", "pulse", "chroma",
+    "flow_dots", "wipe", "transition",
 ]
 
 W, H = 1920, 1080
 FPS = 30
 XF = 12                                   # dissolve length between beats, frames
+BPM = 118.0                               # only `pulse` uses it; --bpm overrides
+BEAT_F = FPS * 60.0 / BPM                 # frames per quarter note
 
 # Brand-neutral defaults. Override with --palette to use the product's own
 # theme table; every key here is required.
@@ -68,7 +72,11 @@ PALETTES = {
                   FLASH=(0, 0, 0)),
 }
 
-P = PALETTES["light"]
+# P is MUTATED in place by run(), never rebound. Films are told to do
+# `from promo_kit import *`, and a rebind would leave every caller holding the
+# light palette forever — the film would render dark-on-dark and only the text
+# drawn inside this module would follow --theme.
+P = dict(PALETTES["light"])
 THEME = "light"
 PLATES = "plates"
 FONTS = {                                  # override with --fonts fontdir
@@ -227,8 +235,16 @@ def background(g):
 
 # ── drawing ───────────────────────────────────────────────────────────────────
 
-def tracked_text(img, xy, text, fnt, fill, tracking=0, anchor="lt", alpha=255):
-    """PIL has no letter-spacing, and display type needs it."""
+def tracked_text(img, xy, text, fnt, fill, tracking=0, anchor="lt", alpha=255,
+                 prog=1.0, stagger=0.0, rise=0.0):
+    """PIL has no letter-spacing, and display type needs it.
+
+    `stagger` > 0 makes the line kinetic: character k starts arriving once
+    `prog >= k * stagger` and rises `rise` px into place as it fades up. The
+    layout is measured from the FINISHED string, so nothing reflows while the
+    letters land. Keep `stagger * len(text) + 0.22 <= 1.0` — otherwise `prog`
+    saturates before the tail has finished its own ramp and the line settles
+    with its last few letters permanently half-lit."""
     d = ImageDraw.Draw(img)
     widths = [d.textlength(ch, font=fnt) for ch in text]
     total = sum(widths) + tracking * max(0, len(text) - 1)
@@ -245,11 +261,33 @@ def tracked_text(img, xy, text, fnt, fill, tracking=0, anchor="lt", alpha=255):
     layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ld = ImageDraw.Draw(layer)
     cx = x
-    for ch, wd in zip(text, widths):
-        ld.text((cx, y), ch, font=fnt, fill=fill + (int(alpha),))
+    for k, (ch, wd) in enumerate(zip(text, widths)):
+        if stagger:
+            p = ease((prog - k * stagger) / 0.22)
+            if p > 0.004:
+                ld.text((cx, y + rise * (1 - p)), ch, font=fnt,
+                        fill=fill + (int(alpha * p),))
+        else:
+            ld.text((cx, y), ch, font=fnt, fill=fill + (int(alpha),))
         cx += wd + tracking
     img.alpha_composite(layer)
     return total
+
+
+def fit_font(role_or_file, text, size, limit, tracking=0.0, floor=13):
+    """Largest size ≤ `size` at which `text` fits inside `limit` px.
+
+    Any label laid into a fixed-width box has to be measured, not guessed —
+    product names and translated strings are never the width you assumed, and
+    the overflow is silent."""
+    d = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    s = size
+    while s > floor:
+        f = font(role_or_file, s)
+        if d.textlength(text, font=f) + tracking * max(0, len(text) - 1) <= limit:
+            return f
+        s -= 1
+    return font(role_or_file, floor)
 
 
 def _rounded_mask(size, radius):
@@ -325,12 +363,208 @@ def plate(name, i, width=None, height=None, box=None, zoom=1.0):
     return im
 
 
-def card(img, name, i, x, y, width, alpha=1.0, radius=14, slide=0, box=None):
+def card(img, name, i, x, y, width, alpha=1.0, radius=14, slide=0, box=None,
+         shine=None):
     """Paste a plate frame as a card; returns its height so the next one can
-    stack under it."""
+    stack under it. Pass the card's own entry ramp as `shine` and a specular
+    band crosses it exactly as it lands."""
     p = plate(name, i, width=width, box=box)
     paste_card(img, p, x + slide, y, radius=radius, alpha=alpha)
+    if shine is not None:
+        sheen(img, x + slide, y, p.width, p.height, shine, radius=radius,
+              strength=alpha)
     return p.height
+
+
+# ── effects ───────────────────────────────────────────────────────────────────
+# Everything here is cheap on purpose. A full-size Gaussian per frame is the one
+# thing that will make a 2000-frame film take an hour, so each of these either
+# works at a fraction of the resolution, caches its expensive part, or paints
+# into a layer the size of the thing it decorates rather than the whole page.
+
+def glass(img, box, radius=20, alpha=1.0, strength=1.0, blur=20, border=True,
+          accent=None):
+    """A frosted panel: whatever is already behind `box`, blurred and tinted.
+
+    This is how you keep a caption legible over a busy UI plate without a flat
+    slab covering it. Blurred at quarter resolution — a 20 px Gaussian over a
+    1920x200 region costs more than the rest of the frame, and after the upscale
+    nobody can tell."""
+    if alpha <= 0.01:
+        return
+    x0, y0, x1, y1 = [int(v) for v in box]
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(W, x1), min(H, y1)
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return
+    reg = img.crop((x0, y0, x1, y1))
+    sw, sh = max(1, (x1 - x0) // 4), max(1, (y1 - y0) // 4)
+    reg = (reg.resize((sw, sh), Image.BILINEAR)
+              .filter(ImageFilter.GaussianBlur(blur / 4.0))
+              .resize((x1 - x0, y1 - y0), Image.BICUBIC))
+    tint = P["SURFACE"] if THEME == "light" else (10, 12, 22)
+    reg.alpha_composite(Image.new("RGBA", reg.size, tint + (
+        int((186 if THEME == "light" else 200) * strength),)))
+    m = _rounded_mask(reg.size, radius)
+    if alpha < 1.0:
+        m = m.point(lambda v: int(v * alpha))
+    reg.putalpha(m)
+    img.alpha_composite(reg, dest=(x0, y0))
+    ol = Image.new("RGBA", reg.size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(ol)
+    if border:
+        od.rounded_rectangle([0, 0, reg.width - 1, reg.height - 1], radius,
+                             outline=P["BORDER"] + (int(190 * alpha),), width=2)
+    if accent:
+        od.rounded_rectangle([0, 14, 5, reg.height - 15], 3,
+                             fill=accent + (int(240 * alpha),))
+    img.alpha_composite(ol, dest=(x0, y0))
+
+
+def sheen(img, x, y, w, h, prog, radius=14, strength=1.0):
+    """A specular band sweeping once across a card as it lands. `prog` outside
+    0..1 draws nothing, so you can hand it a raw `(i - 14) / 30.0`."""
+    if prog <= 0.0 or prog >= 1.0 or strength <= 0.01:
+        return
+    peak = math.sin(math.pi * prog) ** 0.7             # brightest mid-sweep
+    layer = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    cx = -w * 0.45 + prog * (w * 1.9)
+    band = max(40, w * 0.06)
+    for k in range(-int(band), int(band) + 1, 5):
+        a = int(120 * strength * peak * (1 - abs(k) / band) ** 2)
+        if a <= 1:
+            continue
+        d.line([(cx + k, h), (cx + k + h * 0.55, 0)], fill=(255, 255, 255, a),
+               width=7)
+    layer = layer.filter(ImageFilter.GaussianBlur(7))
+    layer.putalpha(ImageChops.multiply(layer.getchannel("A"),
+                                       _rounded_mask(layer.size, radius)))
+    img.alpha_composite(layer, dest=(int(x), int(y)))
+
+
+def brackets(img, x, y, w, h, alpha=1.0, arm=38, colour=None, width=4):
+    """Four corner ticks — reads as a viewfinder over live footage, and tells
+    the eye that this plate is camera and not UI."""
+    if alpha <= 0.01:
+        return
+    colour = colour or P["ACCENT2"]
+    layer = Image.new("RGBA", (int(w) + 4, int(h) + 4), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    c = colour + (int(225 * alpha),)
+    for cx, cy, sx, sy in ((0, 0, 1, 1), (w, 0, -1, 1), (0, h, 1, -1),
+                           (w, h, -1, -1)):
+        d.line([(cx, cy), (cx + sx * arm, cy)], fill=c, width=width)
+        d.line([(cx, cy), (cx, cy + sy * arm)], fill=c, width=width)
+    img.alpha_composite(layer, dest=(int(x) - 2, int(y) - 2))
+
+
+def scanbar(img, x, y, w, h, g, alpha=1.0, radius=16, period=70.0, colour=None):
+    """A soft bright line travelling down a footage plate."""
+    if alpha <= 0.01:
+        return
+    colour = colour or P["ACCENT2"]
+    w, h = int(w), int(h)
+    yy = ((g % period) / period) * (h + 60) - 30
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    for k in range(-10, 11, 2):
+        d.line([(0, yy + k), (w, yy + k)],
+               fill=colour + (int(46 * alpha * (1 - abs(k) / 11.0)),), width=3)
+    layer = layer.filter(ImageFilter.GaussianBlur(4))
+    layer.putalpha(ImageChops.multiply(layer.getchannel("A"),
+                                       _rounded_mask((w, h), radius)))
+    img.alpha_composite(layer, dest=(int(x), int(y)))
+
+
+_backdrop_cache = {}
+
+
+def backdrop(img, name, g, alpha=0.20, blur=30, zoom=1.5, drift=26.0):
+    """A big, blurred, slowly drifting copy of a plate behind the cards — depth
+    for free, in either theme.
+
+    ONE captured frame, blurred once and cached. Blurring a fresh frame every
+    tick costs more than every other effect here combined, and a 30 px blur of a
+    moving UI looks identical to a 30 px blur of a still one."""
+    if alpha <= 0.01:
+        return
+    key = (name, blur, zoom, THEME)
+    if key not in _backdrop_cache:
+        src = frame_at(name, 0)
+        tw = int(W * zoom)
+        src = src.resize((tw, int(src.height * tw / src.width)), Image.LANCZOS)
+        small = src.resize((tw // 6, max(1, src.height // 6)), Image.BILINEAR)
+        _backdrop_cache[key] = (small.filter(ImageFilter.GaussianBlur(blur / 6.0))
+                                     .resize(src.size, Image.BICUBIC))
+    b = _backdrop_cache[key]
+    dx = max(0, min(b.width - W,
+                    int((b.width - W) / 2 + drift * math.sin(g / 190.0))))
+    dy = max(0, min(b.height - H,
+                    int((b.height - H) / 2 + drift * 0.6 * math.cos(g / 240.0))))
+    reg = b.crop((dx, dy, dx + W, dy + H)).copy()
+    reg.putalpha(int(255 * alpha))
+    img.alpha_composite(reg)
+
+
+_pulse_cache = {}
+
+
+def pulse(img, g, depth=0.055):
+    """A vignette that breathes on the musical beat, so the picture moves with
+    the score instead of alongside it. Set BPM (or --bpm) to the score's tempo.
+
+    Eight quantised levels, each cached — recomputing an alpha ramp over a
+    1920x1080 mask a couple of thousand times is pure waste and the step between
+    levels is invisible."""
+    phase = (g % BEAT_F) / BEAT_F
+    amt = depth * max(0.0, math.cos(phase * math.pi * 0.9)) ** 2
+    lvl = int(amt / depth * 7.99)
+    if lvl <= 0:
+        return
+    if lvl not in _pulse_cache:
+        v = _edge_shade().copy()
+        v.putalpha(v.getchannel("A").point(lambda p: int(p * lvl / 7.0 * 0.85)))
+        _pulse_cache[lvl] = v
+    img.alpha_composite(_pulse_cache[lvl])
+
+
+def chroma(img, amt):
+    """Split the channels a couple of pixels. Accent frames only — a handful at
+    a hard section landing, never continuous."""
+    if amt < 0.35:
+        return img
+    r, g, b, a = img.split()
+    px = int(round(amt))
+    return Image.merge("RGBA", (ImageChops.offset(r, px, 0), g,
+                                ImageChops.offset(b, -px, 0), a))
+
+
+def flow_dots(img, pts, g, alpha=1.0, colour=None, speed=0.011, count=5,
+              radius=5):
+    """Dots running along a polyline — data moving through a pipeline diagram.
+    Draw one call per gap between nodes rather than one long line, or the dots
+    track straight across the nodes themselves."""
+    if alpha <= 0.01 or len(pts) < 2:
+        return
+    colour = colour or P["ACCENT2"]
+    segs = [(pts[k], pts[k + 1]) for k in range(len(pts) - 1)]
+    lens = [math.dist(a, b) for a, b in segs]
+    total = sum(lens) or 1.0
+    layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    for k in range(count):
+        want = (((g * speed) + k / count) % 1.0) * total
+        for (a, b), ln in zip(segs, lens):
+            if want <= ln or (a, b) is segs[-1]:
+                f = min(1.0, want / max(1e-6, ln))
+                x, y = a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f
+                r = radius * (0.7 + 0.3 * math.sin(g / 6.0 + k))
+                d.ellipse([x - r, y - r, x + r, y + r],
+                          fill=colour + (int(235 * alpha),))
+                break
+            want -= ln
+    img.alpha_composite(layer.filter(ImageFilter.GaussianBlur(2)))
 
 
 def caption(img, t, title, sub=None, x=120, y=880, colour=None, size=52):
@@ -419,21 +653,67 @@ def wipe(img, a_img, b_img, x, y, frac, radius=12, alpha=1.0):
         img.alpha_composite(edge, dest=(int(x + cut - 3), int(y)))
 
 
+def transition(a, b, t, kind="dissolve"):
+    """Blend two beats across a seam, `t` running 0 → 1 over XF frames.
+
+    A film where every seam cross-dissolves reads as one long even wash. Name a
+    `kind` on the beats that start a new section and the structure lands:
+
+    * `dissolve` — the default, for beats inside a section;
+    * `wipe` — `b` comes in from the left behind a lit edge;
+    * `flash` — through the palette's FLASH colour, i.e. white in light and
+      black in dark. Note the midpoint is a FULLY flat frame; if that reads as
+      an encoding glitch in your cut rather than as a beat, blend the flash over
+      a dissolve instead:
+      `blend(blend(a, b, ease(t)), f, 0.82 * ease(1 - abs(2 * t - 1)))`.
+    """
+    if kind == "wipe":
+        cut = int(W * ease_out(t))
+        out = a.copy()
+        if cut > 0:
+            out.paste(b.crop((0, 0, cut, H)), (0, 0))
+        if 0 < cut < W:
+            band = Image.new("RGBA", (170, H), (0, 0, 0, 0))
+            d = ImageDraw.Draw(band)
+            hue = (255, 255, 255) if THEME == "light" else P["ACCENT2"]
+            for k in range(0, 170, 4):
+                d.rectangle([k, 0, k + 4, H],
+                            fill=hue + (int(165 * (k / 170.0) ** 2),))
+            out.alpha_composite(band.filter(ImageFilter.GaussianBlur(9)),
+                                dest=(max(0, cut - 162), 0))
+        return out
+    if kind == "flash":
+        f = Image.new("RGBA", a.size, P["FLASH"] + (255,))
+        if t < 0.5:
+            return Image.blend(a, f, ease(t / 0.5) * 0.88)
+        return Image.blend(f, b, ease((t - 0.5) / 0.5))
+    return Image.blend(a, b, ease(t))
+
+
 # ── timeline + CLI ────────────────────────────────────────────────────────────
 
 def timeline(beats):
-    """(start, name, fn, length) per beat, overlapping by XF so cuts dissolve."""
+    """(start, name, fn, length, kind) per beat, overlapping by XF.
+
+    A beat is `(name, fn, length)` or `(name, fn, length, transition_kind)`,
+    where the kind describes how THIS beat arrives."""
     out, cur = [], 0
-    for name, fn, ln in beats:
-        out.append((cur, name, fn, ln))
+    for beat in beats:
+        name, fn, ln = beat[0], beat[1], beat[2]
+        kind = beat[3] if len(beat) > 3 else "dissolve"
+        out.append((cur, name, fn, ln, kind))
         cur += ln - XF
     return out, cur + XF
 
 
 def run(beats, argv=None):
-    global P, THEME, PLATES, FONTS, FONT_DIRS
+    global THEME, PLATES, FONTS, FONT_DIRS, BPM, BEAT_F
     ap = argparse.ArgumentParser()
     ap.add_argument("--theme", default="light")
+    ap.add_argument("--bpm", type=float, default=BPM,
+                    help="score tempo, for pulse(); match score.py --bpm")
+    ap.add_argument("--map", action="store_true",
+                    help="print the beat map in frames and seconds, then exit")
     ap.add_argument("--palette", default="", help="json {theme: {KEY: [r,g,b]}}")
     ap.add_argument("--plates", default="plates", help="directory of plate dirs")
     ap.add_argument("--fonts", default="", help="extra font directory")
@@ -446,23 +726,34 @@ def run(beats, argv=None):
     args = ap.parse_args(argv)
 
     THEME = args.theme
+    BPM = args.bpm
+    BEAT_F = FPS * 60.0 / BPM
     if args.palette:
         loaded = json.load(open(args.palette))
         if THEME not in loaded:
             raise SystemExit(f"palette file has no {THEME!r} theme")
         PALETTES[THEME] = {k: tuple(v) for k, v in loaded[THEME].items()}
-    P = PALETTES[THEME]
+    if THEME not in PALETTES:
+        raise SystemExit(f"no {THEME!r} palette; pass --palette")
+    P.clear()
+    P.update(PALETTES[THEME])
     PLATES = args.plates
     if args.fonts:
         FONT_DIRS.insert(0, args.fonts)
     if args.font_map:
         FONTS.update(json.load(open(args.font_map)))
 
+    tl, total = timeline(beats)
+    if args.map:
+        for s, nm, _fn, ln, kind in tl:
+            print(f"{nm:12s} {s:5d} {s / FPS:7.2f}s  len {ln:4d}  {kind}")
+        print(f"{'TOTAL':12s} {total:5d} {total / FPS:7.2f}s")
+        return
     out = args.out or f"frames_{THEME}"
     os.makedirs(out, exist_ok=True)
-    tl, total = timeline(beats)
     if args.only:
-        tl = [(0, nm, fn, ln) for nm, fn, ln in beats if nm == args.only]
+        tl = [(0, nm, fn, ln, kind) for _s, nm, fn, ln, kind in tl
+              if nm == args.only]
         if not tl:
             raise SystemExit(f"no beat named {args.only!r}; "
                              f"have {[b[0] for b in beats]}")
@@ -471,14 +762,16 @@ def run(beats, argv=None):
     print(f"[{THEME}] {total} frames = {total / FPS:.1f}s -> {out}", flush=True)
 
     for g in range(args.start, end, args.stride):
-        active = [(s, fn, ln) for s, _nm, fn, ln in tl if s <= g < s + ln]
+        active = [b for b in tl if b[0] <= g < b[0] + b[3]]
         if not active:
             continue
-        img = None
-        for s, fn, ln in active:
-            i = g - s
-            f = fn(i, ln, g)
-            img = f if img is None else Image.blend(img, f, ease(i / XF))
+        s0, _nm0, fn0, ln0, _k0 = active[0]
+        img = fn0(g - s0, ln0, g)
+        for s1, _nm1, fn1, ln1, kind in active[1:]:
+            # +1 so the last overlapping frame reaches a full 1.0; without it the
+            # dissolve stops at (XF-1)/XF and the next frame jumps the remainder
+            img = transition(img, fn1(g - s1, ln1, g),
+                             (g - s1 + 1) / float(XF), kind)
         img.convert("RGB").save(os.path.join(out, f"{g:05d}.png"),
                                 compress_level=1)
         if g % 60 == 0:
