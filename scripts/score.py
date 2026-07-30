@@ -9,9 +9,17 @@ instead of the edit being cut to fit a track.
     score.py --seconds 63.4 --out score.wav              # driving, default
     score.py --seconds 90 --bpm 96 --energy calm --key D --out bed.wav
 
-Sections scale with `--seconds`: pad-only intro, arpeggio in at 6%, drums in at
-19%, hats thicken at half way, riser before the end, drums out for the closing
-card so the last few seconds resolve.
+Sections scale with `--seconds` by default: pad-only intro, arpeggio in at 6%,
+drums in at 19%, hats thicken at half way, riser before the end, drums out for
+the closing card so the last few seconds resolve.
+
+Those fractions are a guess about where your sections are. When you know — the
+compositor will print the beat map with `--map` — hand the real times over and
+the score lands on the cuts instead of near them:
+
+    film.py --map                                        # read the beat starts
+    score.py --seconds 75.0 --cue arp=2.9,drums=7.8,hats16=41.8,riser=67.8 \
+             --fills 7.6,14.8,25.0,41.6,52.4,64.0 --out score.wav
 
 Mux it under a cut with:
 
@@ -110,7 +118,7 @@ def add(buf, sig, at, gain=1.0, pan=0.0):
     buf[i:i + m, 1] += sig[:m] * gain * (1 + min(0.0, pan))
 
 
-def build(seconds, bpm, tonic, energy):
+def build(seconds, bpm, tonic, energy, cue=None, fills=None):
     beat = 60.0 / bpm
     bar = 4 * beat
     drive = energy == "drive"
@@ -122,10 +130,14 @@ def build(seconds, bpm, tonic, energy):
     chords = [(semis(tonic / 2, root), [semis(tonic, root + iv) for iv in ivs])
               for root, ivs in DEGREES]
 
-    t_in_arp = seconds * 0.06
-    t_in_drum = seconds * 0.19
-    t_in_16 = seconds * 0.52
-    t_out = seconds - 4.2                       # drums stop for the last card
+    cue = cue or {}
+    t_in_arp = cue.get("arp", seconds * 0.06)
+    t_in_drum = cue.get("drums", seconds * 0.19)
+    t_in_16 = cue.get("hats16", seconds * 0.52)
+    t_riser = cue.get("riser", seconds - 10.5)
+    t_out = cue.get("out", seconds - 4.2)       # drums stop for the last card
+    if not fills:                               # fractions, when no beat map
+        fills = [seconds * f for f in (0.31, 0.51, 0.72, 0.83)]
 
     # pad + sub, two bars per chord, the whole way
     at, k = 0.0, 0
@@ -195,8 +207,7 @@ def build(seconds, bpm, tonic, energy):
         t += beat / 2
 
     if drive:                                    # fills into each section
-        for frac in (0.31, 0.51, 0.72, 0.83):
-            at = seconds * frac
+        for at in fills:
             for j in range(4):
                 m = int(0.22 * SR)
                 tt = np.arange(m) / SR
@@ -206,7 +217,7 @@ def build(seconds, bpm, tonic, energy):
 
     ln = int(2.5 * SR)                           # riser into the closing card
     sweep = lowpass(rng.standard_normal(ln), np.linspace(300, 6000, ln))
-    add(bed, sweep * np.linspace(0, 1, ln) ** 2, seconds - 10.5,
+    add(bed, sweep * np.linspace(0, 1, ln) ** 2, t_riser,
         gain=0.13 if drive else 0.09)
 
     # sidechain: the bed breathes around the kick
@@ -237,9 +248,25 @@ def main():
     ap.add_argument("--energy", default="drive", choices=["drive", "calm"],
                     help="drive: four-on-the-floor, bass pulse, claps, fills. "
                          "calm: half-time kick, no bass pulse, softer hats")
+    ap.add_argument("--cue", default="",
+                    help="explicit section times in seconds, e.g. "
+                         "arp=2.9,drums=7.8,hats16=41.8,riser=67.8,out=70.3; "
+                         "anything omitted keeps its default fraction")
+    ap.add_argument("--fills", default="",
+                    help="comma-separated seconds for the tom fills, normally "
+                         "the start of each new section")
     args = ap.parse_args()
 
-    mix = build(args.seconds, args.bpm, KEYS[args.key], args.energy)
+    cue = {}
+    for item in args.cue.split(","):
+        if item.strip():
+            k, _, v = item.partition("=")
+            if k.strip() not in ("arp", "drums", "hats16", "riser", "out"):
+                raise SystemExit(f"unknown cue {k.strip()!r}")
+            cue[k.strip()] = float(v)
+    fills = [float(v) for v in args.fills.split(",") if v.strip()]
+
+    mix = build(args.seconds, args.bpm, KEYS[args.key], args.energy, cue, fills)
     peak = np.abs(mix).max()
     if peak > 0:
         mix = mix / peak * 0.89

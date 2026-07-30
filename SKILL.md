@@ -256,6 +256,34 @@ the chart's window so the line spans it instead of spiking at "now".
   `promo_kit.wipe()` does a hard edge with a lit seam.
 * Keep captions clear of the frame edge: a 52 px title at y=968 with a subtitle
   under it is already cut off at 1080.
+* A label dropped into a fixed-width box overflows silently the moment the string
+  is not the one you designed against — product names and translations never are.
+  Measure it: `promo_kit.fit_font(role, text, size, box_w - pad)`.
+* `from promo_kit import *` gives you `P`; it is mutated in place by `run()` so it
+  follows `--theme`. Do not copy it into a constant of your own, or your film
+  draws one theme while the kit draws the other.
+* A caption over a busy UI plate needs a ground, not a bigger font.
+  `promo_kit.glass()` frosts whatever is already behind the box.
+
+### Structure: make the seams mean something
+If every beat cross-dissolves, the film reads as one continuous even wash and the
+viewer never feels a section change. Name the arrival of the beats that open a
+section, and leave the rest alone:
+
+    BEATS = [("title", b_title, 90),
+             ("loop",  b_loop, 210, "flash"),
+             ("app",   b_app, 140, "wipe"),
+             ("panel", b_panel, 150)]          # "dissolve" is the default
+
+`flash` passes through the palette's FLASH colour, so its midpoint is a fully
+flat frame — white in light, black in dark. That is a beat when the cut is fast
+and an encoding glitch when it is not; `promo_kit.transition` documents the
+softer bloom-over-dissolve variant to swap in.
+
+Kinetic type has one arithmetic constraint. With `tracked_text(..., prog=,
+stagger=)`, keep `stagger * len(text) + 0.22 <= 1.0`. Above that `prog` saturates
+before the last characters have finished their own ramp, and the line settles
+permanently half-lit — it reads as a rendering bug, not an animation.
 
 ### Motion: judder, stepping, and one-frame jolts
 Three defects that all read as "the transitions are not smooth", with three
@@ -289,6 +317,18 @@ question, no attribution line, and no "royalty free" claim to verify — and it
 can be written to the edit instead of the edit being cut to a track. Sections
 scale with `--seconds`: pad-only intro, arpeggio in early, drums in at ~19 %,
 riser before the end, drums out for the closing card.
+
+Those fractions are a guess about where your sections are, and a guess lands the
+drums *near* the cut rather than on it. Once the beat map exists, hand over the
+real times:
+
+    python film.py --map          # every beat's start, in seconds
+    score.py --seconds 75.0 --cue arp=2.9,drums=7.8,hats16=41.8,riser=67.8 \
+             --fills 7.6,14.8,25.0,41.6,52.4,64.0 --out score.wav
+
+Anything omitted from `--cue` keeps its default fraction. Put `--fills` on the
+section starts, and pass the same `--bpm` to the compositor so `promo_kit.pulse()`
+breathes on the same tempo the score is in.
 
 Energy is structural, not a mix decision: `--energy calm` is a half-time kick
 and no bass pulse; `--energy drive` is four-on-the-floor, an eighth-note bass,
