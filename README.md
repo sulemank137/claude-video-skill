@@ -7,6 +7,30 @@ existing screen recording, or by composing the film frame by frame from
 Ships as a [Claude Code](https://claude.com/claude-code) skill (`SKILL.md`), but
 every script runs standalone with Python + ffmpeg.
 
+## Demo
+
+[**Watch `examples/demo.mp4`**](examples/demo.mp4) — a 22-second film cut with
+Mode B from the bundled sample plates (`examples/make_sample_plates.py` +
+`film_example.py`), scored with `score.py` and cued to the actual beat map. No
+paid tools, no stock footage, no product of ours in it — it's the toolkit
+demonstrating itself: the effects table below (`glass`, `sheen`, `brackets`,
+`scanbar`, `flow_dots`, `pulse`, kinetic type, named seam transitions), both in
+one film. Reproduce or restyle it yourself:
+
+```bash
+python examples/make_sample_plates.py
+python examples/film_example.py --plates examples/plates --out /tmp/frames
+python examples/film_example.py --plates examples/plates --map      # beat times
+./scripts/encode.sh /tmp/frames /tmp/demo.mp4
+
+python scripts/score.py --seconds 21.73 --bpm 118 --energy drive \
+    --cue arp=2.6,drums=9.2,hats16=13.47,riser=15.5,out=17.5 \
+    --fills 2.6,9.2,13.47,18.07 --out /tmp/score.wav
+ffmpeg -i /tmp/demo.mp4 -i /tmp/score.wav \
+  -filter_complex "[1:a]loudnorm=I=-16:TP=-2.5:LRA=9[a]" \
+  -map 0:v -map "[a]" -c:v copy -c:a aac -b:a 192k -shortest /tmp/final.mp4
+```
+
 ## Why the second mode exists
 
 Screen recordings age badly. The app moves on, the recording doesn't, and you
@@ -157,6 +181,12 @@ and wrong in motion:
   does nothing and a rival producer at wall-clock time blocks you entirely.
 - **Window plates at the app's natural aspect** read as phone screenshots →
   capture at display aspect (1920x1080 @1.25x).
+- **A page's content column is narrower than its viewport.** Capturing the full
+  1920px viewport of a page whose real content sits in a centered `max-width`
+  column wastes 40%+ of the frame as margin, then the compositor shrinks the
+  already-small body text again to fit a card → capture at the content column's
+  own width instead, and draw the beat's title natively rather than relying on
+  screenshot text to carry it.
 - **Cross-dissolving two text screenshots** (two languages, two themes) is
   unreadable → wipe or cut.
 - **Cross-dissolving every seam** makes a film read as one long even wash with no

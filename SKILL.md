@@ -228,6 +228,21 @@ screenshot and wastes half of a 16:9 frame. Capture full-window plates at
 1920x1080 logical with ~1.25x device scale — it fills the cut like a real
 monitor and still downsamples crisply.
 
+### A page's real content is often narrower than the viewport
+The DISPLAY-aspect advice above is for a native app window. A marketing or
+product *page* is different: it frequently centers its content in a CSS
+`max-width` column — 900-1200px is typical — inside a much wider viewport, with
+the rest left as blank margin. Capturing the full 1920px viewport for a beat
+that's supposed to be about one page section wastes 40%+ of the frame on that
+margin, and the screenshot then gets shrunk *again* to fit a card in the
+compositor — body text that was already 12-14px on the real page becomes
+illegible twice over. Check the page's own CSS for the wrapping container's
+`max-width` and capture at (or a little over) that width instead, paired with
+`--scale 2` so the eventual downscale into the card stays crisp rather than
+soft. A tool page's H1 is usually worth dropping from the capture entirely in
+favour of a title drawn natively by the compositor (`tracked_text`/`caption`)
+— vector type stays legible at any card size, screenshot type doesn't.
+
 ### Silence the app's own data sources — EVERY FRAME
 Real readers (a telemetry poller, a rate monitor, a websocket) keep publishing
 "offline / 0 Hz" when no hardware or backend is attached, and they overwrite the
