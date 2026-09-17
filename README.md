@@ -82,13 +82,16 @@ python scripts/capture_ui.py --backend web --url http://localhost:3000 \
     --driver mydrivers:tick --out plates/health
 
 python scripts/capture_ui.py --backend x11 --display :99 \
-    --region 0,0,1920,1080 --frames 200 --out plates/app
+    --region 0,0,1920,1080 --frames 200 \
+    --driver mydrivers:start --out plates/app   # driver fires once the grab is live
 
 # 2. cut the footage
 python scripts/plates.py clips.json --src-dir footage --out plates
 
 # 3. compose and encode
 python film.py --theme light --plates plates --out frames/light
+# or on every core:
+for k in $(seq 0 11); do python film.py --shard $k/12 --plates plates --out frames/light & done; wait
 ./scripts/encode.sh frames/light promo_light.mp4
 
 # 4. add an original score, cut to the film's length
@@ -145,6 +148,11 @@ hour.
 | `transition(a, b, t, kind)` | `dissolve` / `wipe` / `flash` on a seam; name it as a 4th item on a beat |
 | `fit_font(role, text, size, limit)` | largest size at which a label actually fits its box |
 | `tracked_text(..., prog=, stagger=)` | per-character kinetic type that does not reflow as it lands |
+| `push(im, zoom, focus, size)` | push-in on a still or a plate frame: aspect-correct, clamped inside the image, one affine op |
+| `line_chart(xs, ys, w, h, prog, ...)` | a metric chart that draws itself with a live readout — static layers built once at 2x |
+| `arrow()` / `label()` | the "this becomes that" between two cards, and the two-line name under each |
+| `caption(..., step="01")` / `chip(..., anchor="r")` | numbered sequence captions; chips hung off a right edge |
+| `run(..., --shard K/N)` | render slice K of N, so N processes fill one frame directory |
 
 Name a transition on the beats that start a new section and let the rest
 dissolve:
@@ -206,6 +214,20 @@ and wrong in motion:
   and jolts → ease it across ~8 frames.
 - **Starting a shot already zoomed in** reads as if the opening was clipped off
   → push in from the wide frame.
+- **Footage stretched to fill a beat** plays in slow motion and side-by-sides
+  drift apart → stretch UI captures only; real motion plays at real time, synced
+  at cut time.
+- **A crop box past an image's edge** is padded with black by PIL, not refused →
+  a dark band on the card; `push()` clamps.
+- **A wide crop of busy footage** pulls in a second subject and cuts the first's
+  top or bottom → crop on the subject, at the subject's shape.
+- **GL windows ignore `xdotool --window`** (synthetic events) → activate the
+  window and send input through XTEST; grab the client area with the app's own
+  chrome hidden and no cursor.
+- **An action triggered before the grab starts** is half over by frame one → the
+  x11 backend fires `--driver` after the first frame lands.
+- **A restart artefact drawn raw on a metric chart** reads as a collapse → bridge
+  it only where both sides meet, and say so in the film's notes.
 - Overlapping source-time trims in one ffmpeg graph silently produce a
   wrong-length file with no error at all.
 

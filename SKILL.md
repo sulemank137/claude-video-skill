@@ -6,8 +6,9 @@ description: >
   by frame from offscreen captures of the real UI (Qt, web/Electron, or any X11
   window) plus real camera footage. Covers auditing footage for dynamic moments,
   aspect-correct crops and push-ins, animated lower thirds, crossfades, light and
-  dark cuts from one compositor, and a numeric check that a captured UI panel is
-  animating rather than flickering. Use when asked to make a promo/teaser/demo
+  dark cuts from one compositor, side-by-sides synced at cut time, metric charts
+  that draw themselves, GL/3D window capture over X11, and a numeric check that a
+  captured UI panel is animating rather than flickering. Use when asked to make a promo/teaser/demo
   video, cut a highlight reel, film a product "without screen capture", or fix
   pacing, zoom, aspect-ratio, caption or flickering-UI problems in an edit.
 ---
@@ -279,6 +280,78 @@ the chart's window so the line spans it instead of spiking at "now".
   draws one theme while the kit draws the other.
 * A caption over a busy UI plate needs a ground, not a bigger font.
   `promo_kit.glass()` frosts whatever is already behind the box.
+* Bilingual captions: headline in one language, the line beneath in the other.
+  `caption()` sets the title in the `title` role and the subtitle in `body`, so
+  map each to a face that has the glyphs —
+  `--font-map '{"title": "<CJK face>", "body": "<Latin face>"}'`.
+* A walk through a sequence reads as one story when it is numbered:
+  `caption(..., step="01")`. A column of chips hangs off a right edge with
+  `chip(..., anchor="r")` — no measuring first.
+
+### Footage: frame the subject, then check all four edges
+Real footage is never framed for your card. Cut the plate, run
+`contact_sheet.py` on the PLATE rather than the source, and check every edge:
+
+* A wide crop of a busy scene pulls in whatever stands next to the subject — a
+  second person, a second device, the next screen over — and a tall subject in
+  a 16:9 crop loses its top or bottom. Crop on the subject at the subject's
+  shape (a 4:5 portrait card for a standing figure or a phone) and let the
+  layout make room for it.
+* Real clips open on dead air: setup, a pause, a hand reaching for the button.
+  Cut from where the action starts, found on the sheet — not from 0.
+* A side-by-side (reference / result, before / after, source / copy) is synced
+  at CUT time. Find the same moment in both sheets, start each plate there,
+  and index both with the same `i`. `label()` names the two sides; `arrow()`
+  draws the "becomes" between them.
+
+### Stills: push in, but not far
+A still — a product shot, a generated image, a slide — needs motion to read as
+film. `push(im, zoom, focus, size)` crops toward `focus` and resamples in one
+affine op, and it closes two traps:
+
+* `Image.crop` with a box past the image edge does not fail; it pads with
+  black, which lands as a dark band along one side of the card. `push()` clamps
+  the window inside the image.
+* A push past ~1.10x on a full-figure or full-product shot crops off the very
+  thing the shot is of. Keep it small; the motion is what matters, not the zoom.
+
+### Capturing a GL or 3D window over X11
+3D viewers, game engines, CAD, map views, simulators — anything drawing through
+GLFW — need four things the `qt` and `web` backends do for you:
+
+* **Input through XTEST.** `xdotool key --window ID` sends synthetic events,
+  and GLFW drops them without a word. `windowactivate` the window first, then
+  `xdotool key` / `click` with no `--window`.
+* **Hide the app's own chrome.** Side panels, toolbars and debug overlays go
+  through the app's own shortcuts; frame its camera on the subject; grab only
+  the client area (`xwininfo -id` gives the absolute origin and size). A first
+  grab of the whole window — chrome in, subject small in the middle — was
+  unusable.
+* **No cursor, and start the action after the grab.** `capture_ui.py --backend
+  x11` passes `-draw_mouse 0` and calls `--driver` once the first frame has
+  landed. Scripting ffmpeg yourself, do both, or the opening of the action is
+  over before frame one.
+* **`set -e` capture scripts.** `xdotool windowactivate` can exit non-zero under
+  some window managers (a `_NET_WM_DESKTOP` property error) even though the
+  window did activate, and that aborts the whole capture. `|| true` it.
+
+### Numbers on screen are claims
+A chart, a counter or a "built in 3 hours" card is the part of a film people
+quote. Treat it that way:
+
+* Draw the metric as it was logged. `line_chart(xs, ys, w, h, prog, ...)` builds
+  the chart once at 2x and reveals it as `prog` runs, with a live readout at the
+  front. If you bridge an artefact — a restart that briefly resets a running
+  average, an outage gap, a backfill — confirm both sides meet at the same
+  level and write the bridge down in the notes that ship with the film. Drawn
+  raw, a restart dip reads as a collapse.
+* Put the measurement basis on screen in one small line ("measured from logs ·
+  one-time setup excluded"), and make every number reproducible from files and
+  timestamps.
+* Count a number up, and land it in the exact form you will stand behind
+  (`~3 h`, not `2.97 h`).
+* Clear the rights on anything third-party in shot before a public post:
+  music, logos, a performance, someone else's UI.
 
 ### Structure: make the seams mean something
 If every beat cross-dissolves, the film reads as one continuous even wash and the
@@ -308,10 +381,16 @@ different causes:
   beat repeats each captured frame three times. Index plates FRACTIONALLY —
   `i * (len(seq(name)) - 1) / (n - 1)` — and blend the two neighbours;
   `promo_kit.frame_at()` does the blend for you.
+* **Real motion plays at real time.** Stretching is for UI captures, whose
+  timing is yours to choose. Footage of anything with a natural speed — people,
+  a product in use, a recorded animation, a screen video of a real interaction —
+  plays at the speed it was shot: index it at `i * plate_fps / FPS`
+  (`plates.py` normalises to 30, so just `i`) and size the beat to the clip.
+  Stretched, it plays in slow motion, and two clips side by side drift apart.
 * **Stepping from integer geometry.** A 40 px push-in over 150 frames moves
   0.27 px per frame, so pasting at integer coordinates stair-steps every few
   frames. Scale on a float and place on a float; `promo_kit` resamples through
-  one affine op so slow moves glide.
+  one affine op — `plate(..., zoom=)` and `push()` both — so slow moves glide.
 * **Jolts from captured state changes.** A theme swap or page switch that
   happens between two captured frames lands as a single-frame jump. Ease it
   across ~8 frames by blending the plate frames either side of it, and
@@ -366,6 +445,13 @@ Naive PIL work runs ~2 s/frame — an hour per pass, which kills iteration.
 background once and copy it, paint glow/particles at quarter resolution then
 upscale, cache card shadows by (size, radius), cap the decoded plate cache, and
 save with `compress_level=1`.
+
+Then use every core. `--shard K/N` renders slice K of N into the same `--out`:
+
+    for k in $(seq 0 11); do python film.py --shard $k/12 --out frames & done; wait
+
+The slices are contiguous and every frame is identical to a sequential render; a
+1600-frame film comes back in about three minutes this way.
 
 ### Verify flicker numerically, not by eye
 `scripts/check_flicker.py FRAMES --box x0,y0,x1,y1` crops to the panel and looks

@@ -30,11 +30,13 @@ then:
 
     python film.py --theme dark --plates plates/dark --out frames/dark
     python film.py --only app --start 40 --end 41 --out /tmp/preview
+    for k in 0 1 2 3 4 5 6 7; do python film.py --shard $k/8 --out frames & done; wait
 
 Palettes are yours: `--palette my_theme.json` loads {"light": {...}, "dark":
 {...}} with the keys below, so the film can carry the product's own colours.
 """
 import argparse
+import bisect
 import json
 import math
 import os
@@ -46,7 +48,7 @@ __all__ = [
     "background", "tracked_text", "fit_font", "paste_card", "plate", "card",
     "caption", "chip", "wordmark", "font", "seq", "frame_at", "run",
     "glass", "sheen", "brackets", "scanbar", "backdrop", "pulse", "chroma",
-    "flow_dots", "wipe", "transition",
+    "flow_dots", "wipe", "transition", "push", "label", "arrow", "line_chart",
 ]
 
 W, H = 1920, 1080
@@ -341,15 +343,44 @@ def paste_card(img, im, x, y, radius=16, alpha=1.0, shadow=28, lift=14,
         img.alpha_composite(ol, dest=(int(x), int(y)))
 
 
+def push(im, zoom=1.0, focus=(0.5, 0.5), size=None):
+    """Crop into `im` by `zoom` around `focus` (fractions of width and height)
+    and resample to `size` — default `im.size` — in one affine op.
+
+    Works on any image: a still (a product shot, a generated picture, a slide)
+    or one frame of a plate. The window takes the OUTPUT aspect, so nothing is
+    ever stretched, and it is clamped INSIDE the image: `Image.crop` with a box
+    past the edge does not fail, it pads with black, and that lands as a dark
+    band along one side of the card on exactly the frames where the focus
+    drifts near an edge. Floats all the way down, so a 1.0 -> 1.1 push over 150
+    frames glides instead of stepping a pixel at a time."""
+    zoom = max(1.0, float(zoom))
+    ow, oh = size or im.size
+    ar = ow / oh
+
+    def window(w, h):
+        cw, ch = (w, w / ar) if w / h <= ar else (h * ar, h)
+        return cw / zoom, ch / zoom
+
+    cw, ch = window(*im.size)
+    f = int(cw / ow)
+    if f >= 2:                # an affine resample does not antialias a big shrink
+        im = im.reduce(f)
+        cw, ch = window(*im.size)
+    cx = min(max(im.width * focus[0], cw / 2), im.width - cw / 2)
+    cy = min(max(im.height * focus[1], ch / 2), im.height - ch / 2)
+    return im.transform((int(ow), int(oh)), Image.AFFINE,
+                        (cw / ow, 0, cx - cw / 2, 0, ch / oh, cy - ch / 2),
+                        resample=Image.BICUBIC)
+
+
 def plate(name, i, width=None, height=None, box=None, zoom=1.0):
     """One frame of a plate, optionally cropped, zoomed and scaled."""
     im = frame_at(name, i)
     if box:
         im = im.crop(box)
     if zoom != 1.0:
-        z = im.resize((int(im.width * zoom), int(im.height * zoom)), Image.LANCZOS)
-        l, t = (z.width - im.width) // 2, (z.height - im.height) // 2
-        im = z.crop((l, t, l + im.width, t + im.height))
+        im = push(im, zoom)
     # scale on a float and resample in one affine op, so a slow zoom ramps
     # smoothly instead of jumping a whole pixel every few frames
     if height and not width:
@@ -567,9 +598,14 @@ def flow_dots(img, pts, g, alpha=1.0, colour=None, speed=0.011, count=5,
     img.alpha_composite(layer.filter(ImageFilter.GaussianBlur(2)))
 
 
-def caption(img, t, title, sub=None, x=120, y=880, colour=None, size=52):
+def caption(img, t, title, sub=None, x=120, y=880, colour=None, size=52,
+            step=None):
     """Lower third: a rule that wipes out, then the line rising under it.
-    Keep `y` at 930 or less when there is a subtitle — 1080 comes fast."""
+    Keep `y` at 930 or less when there is a subtitle — 1080 comes fast.
+
+    `step` ("01", "02", ...) is set in mono ahead of the first title line, so a
+    walk through a sequence — a pipeline, a checkout, an onboarding flow — reads
+    as one numbered story rather than a run of unrelated shots."""
     colour = colour or P["ACCENT"]
     a = fade(t, 0.16, 0.14)
     if a <= 0.01:
@@ -581,16 +617,27 @@ def caption(img, t, title, sub=None, x=120, y=880, colour=None, size=52):
     img.alpha_composite(layer)
     rise = int(18 * (1 - ease(t / 0.3)))
     lines = title.split("\n")
+    sx = x
+    if step:
+        sx += tracked_text(img, (x, y + rise + int(size * 0.25)), str(step),
+                           font("mono", int(size * 0.56)), colour, tracking=1,
+                           alpha=255 * a) + int(size * 0.42)
     for k, line in enumerate(lines):
-        tracked_text(img, (x, y + rise + k * int(size * 1.18)), line,
-                     font("title", size), P["TEXT"], tracking=0.5, alpha=255 * a)
+        tracked_text(img, (sx if k == 0 else x, y + rise + k * int(size * 1.18)),
+                     line, font("title", size), P["TEXT"], tracking=0.5,
+                     alpha=255 * a)
     if sub:
         tracked_text(img, (x, y + int(size * 1.18) * (len(lines) - 1) + size + 20
                            + rise), sub, font("body", 26), P["TEXT3"],
                      tracking=2.4, alpha=225 * a)
 
 
-def chip(img, x, y, text, colour=None, alpha=1.0, size=24, mono=True):
+def chip(img, x, y, text, colour=None, alpha=1.0, size=24, mono=True,
+         anchor="l"):
+    """A small outlined tag. `anchor` is l / m / r on `x`, so a column of chips
+    can hang off a right edge without measuring each one first. Returns the
+    width even while invisible, so `x += chip(...) + gap` rows never shift as
+    their chips fade in."""
     colour = colour or P["ACCENT"]
     f = font("mono" if mono else "body", size)
     d = ImageDraw.Draw(img)
@@ -601,8 +648,134 @@ def chip(img, x, y, text, colour=None, alpha=1.0, size=24, mono=True):
                          fill=P["SURFACE"] + (int(240 * alpha),),
                          outline=colour + (int(160 * alpha),), width=2)
     bd.text((17, 10), text, font=f, fill=colour + (int(255 * alpha),))
-    img.alpha_composite(box, dest=(int(x), int(y)))
+    if alpha > 0.01:
+        if anchor[0] == "m":
+            x -= box.width / 2
+        elif anchor[0] == "r":
+            x -= box.width
+        img.alpha_composite(box, dest=(int(x), int(y)))
     return box.width
+
+
+def label(img, cx, y, title, sub=None, alpha=1.0, colour=None, size=28):
+    """Two short lines centred under a card, naming what the plate IS — BEFORE /
+    AFTER, SOURCE / RESULT, a language under its translation. Captions tell the
+    story; labels name the pieces of a side-by-side."""
+    if alpha <= 0.01:
+        return
+    tracked_text(img, (cx, y), title, font("title", size), colour or P["TEXT"],
+                 tracking=0.5, anchor="mt", alpha=255 * alpha)
+    if sub:
+        tracked_text(img, (cx, y + int(size * 1.42)), sub,
+                     font("body", int(size * 0.68)), P["TEXT3"], tracking=3,
+                     anchor="mt", alpha=220 * alpha)
+
+
+def arrow(img, x0, x1, y, prog, colour=None, width=5, head=14):
+    """A horizontal arrow drawing itself from `x0` to `x1` as `prog` runs 0 -> 1
+    — the "this becomes that" between two cards. `prog` is clamped, so a raw
+    `(i - 14) / 20` is fine; pass `x1 < x0` to point left."""
+    if prog <= 0.01:
+        return
+    colour = colour or P["ACCENT"]
+    s = 1 if x1 >= x0 else -1
+    xe = x0 + (x1 - x0) * ease_out(prog)
+    c = colour + (int(230 * min(1.0, prog * 3)),)
+    ox = min(x0, x1) - head - 8                  # a layer the size of the arrow
+    oy = y - head - 4
+    layer = Image.new("RGBA", (int(abs(x1 - x0) + 2 * head + 16), 2 * head + 8),
+                      (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    d.line([(x0 - ox, y - oy), (xe - ox, y - oy)], fill=c, width=width)
+    d.polygon([(xe + s * head - ox, y - oy), (xe - s * 6 - ox, y - head - oy),
+               (xe - s * 6 - ox, y + head - oy)], fill=c)
+    img.alpha_composite(layer, dest=(int(ox), int(oy)))
+
+
+_chart_cache = {}
+
+
+def line_chart(xs, ys, w, h, prog=1.0, title="", sub="", ymin=None, ymax=None,
+               xticks=(), yticks=(), xfmt=str, yfmt=str, readout=None,
+               colour=None, key=None):
+    """A metric chart as a card-sized image: the line draws itself left to right
+    as `prog` runs 0 -> 1, with a dot riding the front. Paste it with
+    `paste_card`.
+
+    Everything static — title, ticks, grid, the whole filled line — is drawn
+    ONCE at 2x and cached; a frame is the empty axes plus a crop of the finished
+    line. Redrawing a 500-point polyline and its fill every frame is slow, and
+    at 1x it aliases. Thin the data to a few hundred points before passing it.
+    `readout(x, y)` returns the text shown top-right as the front advances, e.g.
+    `lambda x, y: f"{x:,.0f} USERS"`.
+
+    A chart on screen is a claim. Plot the metric as it was logged. If you
+    bridge or smooth anything — a restart artefact, an outage gap, a backfill —
+    check both sides meet at the same level, and say so in the notes that ship
+    with the film."""
+    colour = colour or P["ACCENT"]
+    key = key or (len(xs), xs[0], xs[-1], sum(ys), w, h, title, THEME)
+    if key not in _chart_cache:
+        s = 2
+        lo = min(ys) if ymin is None else ymin
+        hi = max(ys) * 1.1 if ymax is None else ymax
+        x0, y0 = 110 * s, (118 if title else 50) * s
+        x1, y1 = (w - 50) * s, (h - 78) * s
+
+        def px(v):
+            return x0 + (x1 - x0) * (v - xs[0]) / ((xs[-1] - xs[0]) or 1)
+
+        def py(v):
+            return y1 - (y1 - y0) * (min(hi, max(lo, v)) - lo) / ((hi - lo) or 1)
+
+        base = Image.new("RGBA", (w * s, h * s), P["SURFACE"] + (255,))
+        d = ImageDraw.Draw(base)
+        if title:
+            tf = font("title", 30 * s)
+            d.text((40 * s, 32 * s), title, font=tf, fill=P["TEXT"])
+            if sub:
+                d.text((40 * s + d.textlength(title, font=tf) + 24 * s, 42 * s),
+                       sub, font=font("body", 17 * s), fill=P["TEXT3"])
+        tick = font("mono", 16 * s)
+        for v in yticks:
+            d.line([(x0, py(v)), (x1, py(v))], fill=P["BORDER"] + (255,), width=s)
+            d.text((x0 - 20 * s, py(v)), yfmt(v), font=tick, fill=P["TEXT3"],
+                   anchor="rm")
+        for v in xticks:
+            d.text((px(v), y1 + 16 * s), xfmt(v), font=tick, fill=P["TEXT3"],
+                   anchor="mt")
+        axes = base.copy()
+        poly = [(px(a), py(b)) for a, b in zip(xs, ys)]
+        fill = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        ImageDraw.Draw(fill).polygon(poly + [(poly[-1][0], y1), (poly[0][0], y1)],
+                                     fill=P["ACCENT2"] + (40,))
+        base.alpha_composite(fill)
+        ImageDraw.Draw(base).line(poly, fill=colour + (255,), width=4 * s,
+                                  joint="curve")
+        _chart_cache[key] = dict(axes=axes.resize((w, h), Image.LANCZOS),
+                                 full=base.resize((w, h), Image.LANCZOS),
+                                 box=(x0 / s, y0 / s, x1 / s, y1 / s), lo=lo, hi=hi)
+    c = _chart_cache[key]
+    x0, y0, x1, y1 = c["box"]
+    prog = max(0.0, min(1.0, prog))
+    im = c["axes"].copy()
+    fx = x0 + (x1 - x0) * prog
+    im.alpha_composite(c["full"].crop((0, 0, int(fx) + 2, h)), dest=(0, 0))
+    if prog > 0.0:
+        xv = xs[0] + (xs[-1] - xs[0]) * prog
+        j = min(len(xs) - 1, max(1, bisect.bisect_left(xs, xv)))
+        span = (xs[j] - xs[j - 1]) or 1
+        yv = ys[j - 1] + (ys[j] - ys[j - 1]) * min(1.0, max(0.0, (xv - xs[j - 1]) / span))
+        fy = y1 - (y1 - y0) * (min(c["hi"], max(c["lo"], yv)) - c["lo"]) / (
+            (c["hi"] - c["lo"]) or 1)
+        d = ImageDraw.Draw(im)
+        d.ellipse([fx - 8, fy - 8, fx + 8, fy + 8], fill=colour + (255,))
+        d.ellipse([fx - 15, fy - 15, fx + 15, fy + 15],
+                  outline=P["ACCENT2"] + (120,), width=3)
+        if readout:
+            d.text((w - 44, 40), readout(xv, yv), font=font("mono", 20),
+                   fill=colour, anchor="ra")
+    return im
 
 
 def wordmark(img, i, title, tagline=None, logo=None, url=None, y=None):
@@ -723,6 +896,9 @@ def run(beats, argv=None):
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--end", type=int, default=0)
     ap.add_argument("--stride", type=int, default=1)
+    ap.add_argument("--shard", default="",
+                    help="K/N: render only slice K (0-based) of N — run N at "
+                         "once, one per core, into the same --out")
     args = ap.parse_args(argv)
 
     THEME = args.theme
@@ -759,9 +935,17 @@ def run(beats, argv=None):
                              f"have {[b[0] for b in beats]}")
         total = tl[0][3]
     end = args.end or total
-    print(f"[{THEME}] {total} frames = {total / FPS:.1f}s -> {out}", flush=True)
+    start = args.start
+    if args.shard:
+        k, nsh = (int(v) for v in args.shard.split("/"))
+        if not 0 <= k < nsh:
+            raise SystemExit("--shard K/N needs 0 <= K < N")
+        start, end = (args.start + (end - args.start) * k // nsh,
+                      args.start + (end - args.start) * (k + 1) // nsh)
+    print(f"[{THEME}] {total} frames = {total / FPS:.1f}s -> {out}"
+          f"  (rendering {start}..{end})", flush=True)
 
-    for g in range(args.start, end, args.stride):
+    for g in range(start, end, args.stride):
         active = [b for b in tl if b[0] <= g < b[0] + b[3]]
         if not active:
             continue
