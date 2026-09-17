@@ -216,9 +216,17 @@ def capture_x11(args, driver, setup):
     """Grab a region of an X display with ffmpeg.
 
     Unlike the other two backends this one cannot step the UI frame by frame —
-    ffmpeg owns the clock — so a --driver is only called once, before capture.
+    ffmpeg owns the clock. So `--setup` arranges the window before the grab, and
+    `--driver` is called ONCE, after the first frame has landed, to start the
+    action (play the animation, open the page, start the demo). Triggered before
+    the grab, the opening of the action is already over by the first frame.
     Run the app under Xvfb (`Xvfb :99 -screen 0 1920x1080x24`) for a clean,
     fixed-size, invisible display.
+
+    The cursor is never drawn. For a GL window (a 3D viewer, a game engine, a
+    CAD or map view — anything on GLFW) drive it with XTEST — `xdotool key` /
+    `click` with no `--window` — after `windowactivate`: `--window` sends
+    synthetic events, and GLFW drops them without a word.
     """
     if not args.region:
         raise SystemExit("--backend x11 needs --region x,y,w,h")
@@ -226,14 +234,24 @@ def capture_x11(args, driver, setup):
     ctx = Ctx("x11", display=args.display)
     if setup:
         setup(ctx)
-    if driver:
-        driver(ctx, 0.0, 0)
     os.makedirs(args.out, exist_ok=True)
-    cmd = ["ffmpeg", "-v", "error", "-f", "x11grab", "-framerate", str(args.fps),
+    first = os.path.join(args.out, "00000.png")
+    if os.path.exists(first):                 # a stale frame would fire the
+        os.remove(first)                      # driver before the grab began
+    cmd = ["ffmpeg", "-v", "error", "-f", "x11grab", "-draw_mouse", "0",
+           "-framerate", str(args.fps),
            "-video_size", f"{w}x{h}", "-i", f"{args.display}+{x},{y}",
            "-frames:v", str(args.frames), "-start_number", "0",
            os.path.join(args.out, "%05d.png"), "-y"]
-    subprocess.run(cmd, check=True)
+    proc = subprocess.Popen(cmd)
+    if driver:
+        t0 = time.time()
+        while (not os.path.exists(first) and proc.poll() is None
+               and time.time() - t0 < 15):
+            time.sleep(0.05)
+        driver(ctx, 0.0, 0)
+    if proc.wait() != 0:
+        raise SystemExit(f"ffmpeg exited {proc.returncode}")
     print(f"x11 -> {args.out}", flush=True)
 
 
