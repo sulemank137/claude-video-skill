@@ -345,6 +345,11 @@ quote. Treat it that way:
   average, an outage gap, a backfill — confirm both sides meet at the same
   level and write the bridge down in the notes that ship with the film. Drawn
   raw, a restart dip reads as a collapse.
+* Two metrics that belong together go on ONE axes, not two cards: a baseline
+  against a treatment, the seeds of one run. `line_chart(xs, None, w, h, prog,
+  series=[(ys, colour, name), ...])` draws each line at the same front with a
+  legend; a `None` in a series is a missing sample and the line bridges it, so
+  say so if the gap is real. The single-series call is unchanged.
 * Put the measurement basis on screen in one small line ("measured from logs ·
   one-time setup excluded"), and make every number reproducible from files and
   timestamps.

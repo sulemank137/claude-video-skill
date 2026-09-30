@@ -697,10 +697,18 @@ _chart_cache = {}
 
 def line_chart(xs, ys, w, h, prog=1.0, title="", sub="", ymin=None, ymax=None,
                xticks=(), yticks=(), xfmt=str, yfmt=str, readout=None,
-               colour=None, key=None):
+               colour=None, key=None, series=None):
     """A metric chart as a card-sized image: the line draws itself left to right
     as `prog` runs 0 -> 1, with a dot riding the front. Paste it with
     `paste_card`.
+
+    Several lines on one axes — a baseline against a treatment, three seeds of
+    one run — go in as `series=[(ys, colour, name), ...]` sharing `xs` (a `ys`
+    may hold None where it has no sample, and the line bridges that gap); `ys`
+    is then ignored. Each
+    line draws itself at the same front, the legend lists the names top-left,
+    and the fill under the line is dropped, since stacked fills hide each other.
+    `readout(x, y)` then receives the FIRST series' value at the front.
 
     Everything static — title, ticks, grid, the whole filled line — is drawn
     ONCE at 2x and cached; a frame is the empty axes plus a crop of the finished
@@ -714,11 +722,15 @@ def line_chart(xs, ys, w, h, prog=1.0, title="", sub="", ymin=None, ymax=None,
     check both sides meet at the same level, and say so in the notes that ship
     with the film."""
     colour = colour or P["ACCENT"]
-    key = key or (len(xs), xs[0], xs[-1], sum(ys), w, h, title, THEME)
+    lines = series or [(ys, colour, None)]
+    ys = lines[0][0]
+    key = key or (len(xs), xs[0], xs[-1], tuple(sum(v for v in l[0] if v is not None) for l in lines),
+                  w, h, title, THEME)
     if key not in _chart_cache:
         s = 2
-        lo = min(ys) if ymin is None else ymin
-        hi = max(ys) * 1.1 if ymax is None else ymax
+        allv = [v for l in lines for v in l[0] if v is not None]
+        lo = min(allv) if ymin is None else ymin
+        hi = max(allv) * 1.1 if ymax is None else ymax
         x0, y0 = 110 * s, (118 if title else 50) * s
         x1, y1 = (w - 50) * s, (h - 78) * s
 
@@ -744,14 +756,26 @@ def line_chart(xs, ys, w, h, prog=1.0, title="", sub="", ymin=None, ymax=None,
         for v in xticks:
             d.text((px(v), y1 + 16 * s), xfmt(v), font=tick, fill=P["TEXT3"],
                    anchor="mt")
+        if series:                                    # legend, top-left under the title
+            lf, lx, ly = font("body", 18 * s), x0, y0 - 30 * s
+            for _, lc, name in lines:
+                if not name:
+                    continue
+                d.line([(lx, ly), (lx + 28 * s, ly)], fill=(lc or colour) + (255,), width=4 * s)
+                d.text((lx + 38 * s, ly), name, font=lf, fill=P["TEXT2"], anchor="lm")
+                lx += 38 * s + d.textlength(name, font=lf) + 34 * s
         axes = base.copy()
-        poly = [(px(a), py(b)) for a, b in zip(xs, ys)]
-        fill = Image.new("RGBA", base.size, (0, 0, 0, 0))
-        ImageDraw.Draw(fill).polygon(poly + [(poly[-1][0], y1), (poly[0][0], y1)],
-                                     fill=P["ACCENT2"] + (40,))
-        base.alpha_composite(fill)
-        ImageDraw.Draw(base).line(poly, fill=colour + (255,), width=4 * s,
-                                  joint="curve")
+        for lys, lc, _ in lines:
+            poly = [(px(a), py(b)) for a, b in zip(xs, lys) if b is not None]
+            if len(poly) < 2:
+                continue
+            if not series:                            # a lone line keeps its fill
+                fill = Image.new("RGBA", base.size, (0, 0, 0, 0))
+                ImageDraw.Draw(fill).polygon(poly + [(poly[-1][0], y1), (poly[0][0], y1)],
+                                             fill=P["ACCENT2"] + (40,))
+                base.alpha_composite(fill)
+            ImageDraw.Draw(base).line(poly, fill=(lc or colour) + (255,), width=4 * s,
+                                      joint="curve")
         _chart_cache[key] = dict(axes=axes.resize((w, h), Image.LANCZOS),
                                  full=base.resize((w, h), Image.LANCZOS),
                                  box=(x0 / s, y0 / s, x1 / s, y1 / s), lo=lo, hi=hi)
@@ -765,15 +789,21 @@ def line_chart(xs, ys, w, h, prog=1.0, title="", sub="", ymin=None, ymax=None,
         xv = xs[0] + (xs[-1] - xs[0]) * prog
         j = min(len(xs) - 1, max(1, bisect.bisect_left(xs, xv)))
         span = (xs[j] - xs[j - 1]) or 1
-        yv = ys[j - 1] + (ys[j] - ys[j - 1]) * min(1.0, max(0.0, (xv - xs[j - 1]) / span))
-        fy = y1 - (y1 - y0) * (min(c["hi"], max(c["lo"], yv)) - c["lo"]) / (
-            (c["hi"] - c["lo"]) or 1)
         d = ImageDraw.Draw(im)
-        d.ellipse([fx - 8, fy - 8, fx + 8, fy + 8], fill=colour + (255,))
-        d.ellipse([fx - 15, fy - 15, fx + 15, fy + 15],
-                  outline=P["ACCENT2"] + (120,), width=3)
-        if readout:
-            d.text((w - 44, 40), readout(xv, yv), font=font("mono", 20),
+        first = None
+        for lys, lc, _ in lines:
+            a, b = lys[j - 1], lys[j]
+            if a is None or b is None:
+                continue
+            yv = a + (b - a) * min(1.0, max(0.0, (xv - xs[j - 1]) / span))
+            first = yv if first is None else first
+            fy = y1 - (y1 - y0) * (min(c["hi"], max(c["lo"], yv)) - c["lo"]) / (
+                (c["hi"] - c["lo"]) or 1)
+            d.ellipse([fx - 8, fy - 8, fx + 8, fy + 8], fill=(lc or colour) + (255,))
+            d.ellipse([fx - 15, fy - 15, fx + 15, fy + 15],
+                      outline=P["ACCENT2"] + (120,), width=3)
+        if readout and first is not None:
+            d.text((w - 44, 40), readout(xv, first), font=font("mono", 20),
                    fill=colour, anchor="ra")
     return im
 
