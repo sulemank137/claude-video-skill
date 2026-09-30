@@ -205,8 +205,11 @@ feed the compositor:
    `scripts/promo_kit.py`.
 
 A film is then a list of `(name, function, length_in_frames)`; see
-`examples/film_example.py`. `--only <beat>` and `--start/--end` re-render one
-beat into an existing frame directory, so a fix costs a minute, not an hour.
+`examples/film_example.py`. `--only <beat>` renders that beat alone, numbered
+from 0 — a preview into a scratch directory. To re-render one beat IN PLACE,
+pass its global frame range from `--map` as `--start/--end` (pad by the
+12-frame dissolve on each side); `--only` into the real frame directory
+overwrites the film's opening frames instead, and the encode looks fine.
 
 ### Drive the UI through its own entry points
 Feed the state machine the way the product does — the stdout its subprocesses
