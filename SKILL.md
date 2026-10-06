@@ -205,8 +205,11 @@ feed the compositor:
    `scripts/promo_kit.py`.
 
 A film is then a list of `(name, function, length_in_frames)`; see
-`examples/film_example.py`. `--only <beat>` and `--start/--end` re-render one
-beat into an existing frame directory, so a fix costs a minute, not an hour.
+`examples/film_example.py`. `--only <beat>` renders that beat alone, numbered
+from 0 — a preview into a scratch directory. To re-render one beat IN PLACE,
+pass its global frame range from `--map` as `--start/--end` (pad by the
+12-frame dissolve on each side); `--only` into the real frame directory
+overwrites the film's opening frames instead, and the encode looks fine.
 
 ### Drive the UI through its own entry points
 Feed the state machine the way the product does — the stdout its subprocesses
@@ -345,6 +348,11 @@ quote. Treat it that way:
   average, an outage gap, a backfill — confirm both sides meet at the same
   level and write the bridge down in the notes that ship with the film. Drawn
   raw, a restart dip reads as a collapse.
+* Two metrics that belong together go on ONE axes, not two cards: a baseline
+  against a treatment, the seeds of one run. `line_chart(xs, None, w, h, prog,
+  series=[(ys, colour, name), ...])` draws each line at the same front with a
+  legend; a `None` in a series is a missing sample and the line bridges it, so
+  say so if the gap is real. The single-series call is unchanged.
 * Put the measurement basis on screen in one small line ("measured from logs ·
   one-time setup excluded"), and make every number reproducible from files and
   timestamps.
