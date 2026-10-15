@@ -122,7 +122,9 @@ python examples/film_example.py --plates examples/plates --out /tmp/frames
 | `scripts/build_promo.py` | Mode A: JSON → ffmpeg `filter_complex` → cut film |
 | `scripts/capture_ui.py` | Mode B: capture a UI as PNG frames — `qt`, `web`, `x11` backends |
 | `scripts/plates.py` | cut footage into plates at the exact size the layout uses |
-| `scripts/promo_kit.py` | PIL toolkit: palettes, background, cards, captions, chips, effects, seam transitions, beat timeline, CLI |
+| `scripts/promo_kit.py` | PIL toolkit: palettes, background, cards, captions, chips, effects, seam transitions, beat timeline, CLI (`--probe` puts chosen frames of chosen beats on one sheet) |
+| `scripts/explain_kit.py` | explainer films: typeset equations, diagram nodes and edges that draw themselves, animated bars with intervals, chart annotation map |
+| `scripts/walker.py` | a side-view person or humanoid robot walking, from one gait model, so one can turn into the other mid-stride |
 | `scripts/score.py` | synthesise an original, licence-free cue at the film's exact length |
 | `scripts/check_flicker.py` | numeric smoothness audit: flicker, judder, one-frame jolts |
 | `scripts/encode.sh` | PNG sequence → H.264 at sane settings |
@@ -173,6 +175,28 @@ python film.py --map          # prints every beat's start in seconds
 python scripts/score.py --seconds 75.0 \
     --cue arp=2.9,drums=7.8,hats16=41.8,riser=67.8 \
     --fills 7.6,14.8,25.0,41.6,52.4,64.0 --out score.wav
+```
+
+## Explainer films
+
+When the film explains an idea rather than shows a product, draw it in the same
+compositor: a person who turns into a robot mid-stride, a pipeline whose edges
+draw themselves, an equation written on screen, bars that grow to the published
+numbers.
+
+```python
+from explain_kit import tex, reveal, node, edge, bars, chart_map
+import walker
+
+lay, pts = walker.render("robot", phi, 1.0, 520, (W, H), 800, 620)   # phi integrated per frame
+img.alpha_composite(lay)
+reveal(img, tex(r"$v(t) = v_0\, e^{-t/\tau}$", 64), 130, 220, prog)
+node(img, (150, 330, 770, 610), "SERVER", "one process per core", prog, BLUE)
+edge(img, [(770, 420), (1150, 420)], prog, g, BLUE, label="REQUESTS")
+```
+
+```bash
+python film.py --probe intro:40,200 loop:140 --out probe.jpg   # look before the full render
 ```
 
 ## The failure modes it encodes
@@ -230,10 +254,20 @@ and wrong in motion:
   it only where both sides meet, and say so in the film's notes.
 - Overlapping source-time trims in one ffmpeg graph silently produce a
   wrong-length file with no error at all.
+- **A drawn walker whose trunk height is animated freely** sinks into the floor
+  or floats; a floor moving at any speed but the stance foot's makes it skate →
+  pin the lower foot to the ground each frame and run the floor at
+  `stance_speed()`.
+- **A walk that continues across a dissolve** ghosts as two strides → start the
+  next beat from the phase at frame `n - XF`, and start any move after `XF`.
+- **A chart axis clipped below the data** draws a plateau that never happened →
+  full range, threshold marked.
+- **`math_to_image` paints an opaque white background** → render black on white
+  and turn luminance into alpha (`tex()`).
 
 ## Requirements
 
-- Python 3.9+, `pillow`, `numpy`
+- Python 3.9+, `pillow`, `numpy`; `matplotlib` for `explain_kit.tex()` only
 - `ffmpeg` / `ffprobe` on PATH
 - Mode B, per backend: a Qt binding (PyQt6/PySide6/PyQt5/PySide2), or
   `playwright` + Chromium, or an X server (Xvfb is ideal)

@@ -929,6 +929,9 @@ def run(beats, argv=None):
     ap.add_argument("--shard", default="",
                     help="K/N: render only slice K (0-based) of N — run N at "
                          "once, one per core, into the same --out")
+    ap.add_argument("--probe", nargs="+", default=None, metavar="BEAT:I,I",
+                    help="render frames I of BEAT (several specs allowed) into "
+                         "one half-size contact sheet at --out, then exit")
     args = ap.parse_args(argv)
 
     THEME = args.theme
@@ -954,6 +957,24 @@ def run(beats, argv=None):
         for s, nm, _fn, ln, kind in tl:
             print(f"{nm:12s} {s:5d} {s / FPS:7.2f}s  len {ln:4d}  {kind}")
         print(f"{'TOTAL':12s} {total:5d} {total / FPS:7.2f}s")
+        return
+    if args.probe:
+        # Look at the frames that matter before paying for a full render: a beat's
+        # first landing, its busiest moment, its last frame before the next seam.
+        at = {nm: (s, fn, ln) for s, nm, fn, ln, _k in tl}
+        tiles = []
+        for spec in args.probe:
+            nm, idx = spec.split(":")
+            if nm not in at:
+                raise SystemExit(f"no beat named {nm!r}; have {list(at)}")
+            s0, fn, ln = at[nm]
+            for i in (int(v) for v in idx.split(",")):
+                tiles.append(fn(i, ln, s0 + i).convert("RGB").resize((W // 2, H // 2)))
+        sheet = Image.new("RGB", (W, H // 2 * ((len(tiles) + 1) // 2)), P["BG"])
+        for k, im in enumerate(tiles):
+            sheet.paste(im, ((k % 2) * (W // 2), (k // 2) * (H // 2)))
+        sheet.save(args.out or "probe.jpg")
+        print(f"probe: {len(tiles)} frames -> {args.out or 'probe.jpg'}")
         return
     out = args.out or f"frames_{THEME}"
     os.makedirs(out, exist_ok=True)

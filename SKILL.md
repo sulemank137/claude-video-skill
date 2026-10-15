@@ -8,8 +8,10 @@ description: >
   aspect-correct crops and push-ins, animated lower thirds, crossfades, light and
   dark cuts from one compositor, side-by-sides synced at cut time, metric charts
   that draw themselves, GL/3D window capture over X11, and a numeric check that a
-  captured UI panel is animating rather than flickering. Use when asked to make a promo/teaser/demo
-  video, cut a highlight reel, film a product "without screen capture", or fix
+  captured UI panel is animating rather than flickering. Also concept and
+  research explainers drawn from scratch: animated people and robots, diagrams
+  that draw themselves, typeset equations, animated bar charts. Use when asked to make a promo/teaser/demo
+  video, an explainer or concept video, cut a highlight reel, film a product "without screen capture", or fix
   pacing, zoom, aspect-ratio, caption or flickering-UI problems in an edit.
 ---
 
@@ -467,6 +469,81 @@ for A-B-A oscillation (this frame matches the one two back but differs from the
 one before). Zero oscillations with a small residual per-frame delta is what
 "animating smoothly" looks like; anything else is flicker you would have
 shipped. Exit code 1 on failure, so it belongs in the build script.
+
+## Explainer films — draw the idea
+
+Some films explain a concept rather than show a product: a research result, a
+method, how a system works. There is no UI to capture, and the clearest picture
+is often one nobody can film (an analogy, a force no camera sees, a
+definition). Draw it. Mode B's compositor carries the whole
+thing; `scripts/explain_kit.py` and `scripts/walker.py` add the pieces:
+
+| call | what it is for |
+|---|---|
+| `tex(r"$...$", px, colour)` | a formula typeset by matplotlib mathtext (Computer Modern, no LaTeX install), as an RGBA image |
+| `reveal(img, im, x, y, prog)` | paste an image left to right, an equation being written |
+| `node(img, box, title, sub, prog, accent)` | a diagram box that pops in; text measured to the box |
+| `edge(img, pts, prog, g, colour, dashed=, label=)` | a polyline edge that draws itself, then carries flow dots |
+| `bars(img, box, groups, prog, vmax, mean=, horizontal=)` | grouped bars that grow and count up, with interval whiskers and a mean line |
+| `chart_map(xs, w, h, lo, hi)` | `line_chart`'s data -> pixel map, so a band, threshold or marker lands on the plotted value |
+| `walker.render(style, phi, c, L, size, ground_y, x0)` | a side-view person or humanoid robot from one gait model, with a `hook` to draw props between trunk and near arm |
+
+Look before you render: `film.py --probe intro:40,200 loop:140 --out probe.jpg`
+puts any frames of any beats on one sheet in seconds. Probe each beat at its
+landing, its busiest moment and its last frame, and fix what you see before the
+full render.
+
+### Characters: one skeleton, constrained to the ground
+* **Pin the stance foot.** Each frame, lift the pelvis so the lower foot sits on
+  the floor. The walk gets its bob for free, and the feet never sink into the
+  belt or float above it. Integrating the trunk height any other way drifts.
+* **Move the floor at the stance foot's speed.** A treadmill belt or a floor
+  grid that runs at any other speed makes the planted foot skate.
+  `walker.stance_speed(L, c)` is the speed per gait cycle.
+* **Integrate the phase.** `phi += 1 / cycle_frames` per frame. With
+  `phi = i / cycle` and a cycle length that changes with time, the gait jumps.
+* **One skeleton, two styles.** A person and a robot drawn on the same joints
+  and phase can turn into each other mid-stride: a scan line with the robot to
+  its left and the person to its right reads as the same body changing.
+* **Supersample.** PIL lines and polygons are not antialiased. Draw the figure
+  and its props at 2x on one layer and LANCZOS it down once.
+* **Layer order is anatomy.** A harness, a backpack or a tool goes over the trunk
+  and under the near arm. Draw it from the `hook`, or it lies on top of the arm.
+
+### Across beats: hand the motion over
+Beats overlap by `XF` frames, so the next beat's frame 0 is this beat's frame
+`n - XF`. Start a continuing walk from the phase and floor offset at that frame,
+not at frame `n`, or the dissolve blends two strides a few frames apart. Start
+any move in the new beat (a figure sliding aside, a zoom) after `XF`: even a
+3 px shift inside the dissolve shows as a ghost of the head.
+
+### Equations
+* `math_to_image` paints an opaque white background. Render black on white and
+  turn the luminance into alpha (what `tex()` does), or every formula sits in a
+  white box on a tinted card.
+* mathtext has no `\color` and no `cases`/`array`. Write a piecewise function as
+  one expression (`f_0 \min(1, \max(0, (T-t)/(0.9T)))`), and mark a term by
+  drawing under it at `tex_x(prefix)`.
+* Write the formula on screen with `reveal()`, then the line that says what each
+  symbol is and its value. A formula with no numbers is decoration.
+
+### Diagrams and charts in an explainer
+* Reveal a diagram in the order the reader should read it: nodes, then edges,
+  then the one edge that matters. A forbidden path is a dashed edge with an X
+  and a label, not an absent edge, so the viewer sees the path that does not
+  exist.
+* **Never clip a chart's y axis below the data.** A rate drawn on a 0–40 % axis
+  turned a curve that starts at 100 % into a plateau that never happened.
+  Use the full range and mark the threshold that matters.
+* Show a definition by doing it: slide the window of a sustained-threshold
+  endpoint along the real logged values and stop it where the analysis code
+  stops. Assert in the data-prep script that the code's answer equals the
+  published number.
+* Anything drawn rather than measured, like a typical schedule or a schematic
+  curve, carries an on-screen chip saying ILLUSTRATIVE.
+* A long label in a side column runs off the frame at 1920 px. Measure it with
+  `fit_font`, and fade floors and grids out toward their ends rather than
+  stopping them on a hard edge in mid-frame.
 
 ## Render settings
 `libx264`, `-crf 16` (visually near-lossless, fine for short films — raise
