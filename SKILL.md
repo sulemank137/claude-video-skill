@@ -1,31 +1,39 @@
 ---
 name: claude-video-skill
 description: >
-  Build a short HD product film two ways: cut one from an existing screen
-  recording with ffmpeg, or — when no usable recording exists — compose it frame
-  by frame from offscreen captures of the real UI (Qt, web/Electron, or any X11
-  window) plus real camera footage. Covers auditing footage for dynamic moments,
-  aspect-correct crops and push-ins, animated lower thirds, crossfades, light and
-  dark cuts from one compositor, side-by-sides synced at cut time, metric charts
-  that draw themselves, GL/3D window capture over X11, and a numeric check that a
-  captured UI panel is animating rather than flickering. Also concept and
-  research explainers drawn from scratch: animated people and robots, diagrams
-  that draw themselves, typeset equations, animated bar charts. Use when asked to make a promo/teaser/demo
-  video, an explainer or concept video, cut a highlight reel, film a product "without screen capture", or fix
-  pacing, zoom, aspect-ratio, caption or flickering-UI problems in an edit.
+  Build a short HD film (product promo, demo or highlight reel, concept or
+  research explainer) three ways: cut an existing screen recording with ffmpeg;
+  compose it frame by frame from offscreen captures of the real UI (Qt,
+  web/Electron, or any X11 window) plus real camera footage; or draw the idea
+  itself, with animated people and robots, diagrams that draw themselves,
+  typeset equations and charts from logs. Covers auditing footage for dynamic
+  moments, aspect-correct crops and push-ins, animated lower thirds, crossfades,
+  light and dark cuts from one compositor, side-by-sides synced at cut time,
+  metric charts that draw themselves, GL/3D window capture over X11, and a
+  numeric check that a captured UI panel is animating rather than flickering.
+  Use when asked to make a promo/teaser/demo video, an explainer, concept or
+  research video, cut a highlight reel, film a product "without screen
+  capture", or fix pacing, zoom, aspect-ratio, caption or flickering-UI
+  problems in an edit.
 ---
 
 # claude-video-skill
 
-Two ways to make a ~60 s product film, no paid tools and no MCP:
+Three ways to make a short film (a product promo, a demo reel, or a concept or
+research explainer), no paid tools and no MCP:
 
 * **Mode A — cut a recording.** ffmpeg `filter_complex`, driven by
   `scripts/build_promo.py`. Use it when a recording already contains the shots.
-* **Mode B — compose the film.** Frames built in PIL (`scripts/promo_kit.py`)
+* **Mode B — compose from captures.** Frames built in PIL (`scripts/promo_kit.py`)
   from plates: offscreen captures of the real UI (`scripts/capture_ui.py`) and
   cuts of real footage (`scripts/plates.py`). Use it when there is no usable
   recording, when the UI has moved on since the last one, or when the film has
   to show the product exactly as it ships today.
+* **Mode C — draw the idea.** Characters, diagrams, equations and charts from
+  logs, drawn in the same compositor (`scripts/explain_kit.py`,
+  `scripts/walker.py`), with Mode B plates wherever the real thing exists. Use it
+  for explainers: what the film has to show cannot be filmed. See "Mode C —
+  explainer films" below.
 
 Mode B is also the answer when a Mode A cut keeps failing on "the UI is stale /
 that page doesn't exist any more".
@@ -187,7 +195,7 @@ When in doubt, prefer a single clean full-screen cut over a blurred-backdrop
 layering trick — it's the safer default and was the actual fix that turned a
 rejected "trash" edit into an accepted one.
 
-## Mode B — compose the film (no screen recording)
+## Mode B — compose from captures (no screen recording)
 
 Frames are composed in PIL and encoded from a PNG sequence. Three kinds of plate
 feed the compositor:
@@ -470,7 +478,7 @@ one before). Zero oscillations with a small residual per-frame delta is what
 "animating smoothly" looks like; anything else is flicker you would have
 shipped. Exit code 1 on failure, so it belongs in the build script.
 
-## Explainer films — draw the idea
+## Mode C — explainer films: draw the idea
 
 Some films explain a concept rather than show a product: a research result, a
 method, how a system works. There is no UI to capture, and the clearest picture

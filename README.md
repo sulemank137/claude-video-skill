@@ -1,8 +1,27 @@
 # claude-video-skill
 
-Make a ~60-second product film without paid tools — either by cutting an
-existing screen recording, or by composing the film frame by frame from
-**offscreen captures of the real UI** plus real camera footage.
+Make short HD films without paid tools: product promos and demo reels, cuts of
+real footage, and concept or research explainers drawn from scratch, with people
+and robots in motion, diagrams that draw themselves, typeset equations and charts
+plotted from your own logs.
+
+| film | built from | mode |
+|---|---|---|
+| product promo, launch teaser | the real UI captured offscreen, plus camera footage | B |
+| demo or highlight reel | an existing screen recording or video, cut with ffmpeg | A |
+| concept explainer | drawn: animated people and robots, diagrams, equations | C |
+| research or results film | charts from the logs, sim or lab footage, every number traceable | B + C |
+
+Three modes, one compositor:
+
+* **Mode A — cut a recording.** One JSON config → an ffmpeg graph with
+  aspect-correct push-ins, lower thirds and crossfades.
+* **Mode B — compose from captures.** Every frame built in PIL from plates:
+  offscreen captures of the real UI (Qt, web/Electron, any X11 window) and cuts
+  of real footage.
+* **Mode C — draw the idea.** For what no camera can film: an analogy, a force,
+  a definition, a training loop. Characters, diagrams, equations and charts drawn
+  in the same compositor, mixed freely with Mode B plates.
 
 Ships as a [Claude Code](https://claude.com/claude-code) skill (`SKILL.md`), but
 every script runs standalone with Python + ffmpeg.
@@ -31,7 +50,7 @@ ffmpeg -i /tmp/demo.mp4 -i /tmp/score.wav \
   -map 0:v -map "[a]" -c:v copy -c:a aac -b:a 192k -shortest /tmp/final.mp4
 ```
 
-## Why the second mode exists
+## Why Mode B exists
 
 Screen recordings age badly. The app moves on, the recording doesn't, and you
 end up shipping a film of a product that no longer exists — or re-recording the
@@ -45,7 +64,8 @@ desktop, and no "please don't move the mouse for six minutes".
 ```bash
 git clone https://github.com/sulemank137/claude-video-skill.git
 cd claude-video-skill
-pip install pillow numpy                 # both modes
+pip install pillow numpy                 # every mode
+pip install matplotlib                   # Mode C equations (tex) only
 pip install playwright && playwright install chromium   # web capture only
 # ffmpeg must be on PATH
 ```
@@ -69,7 +89,7 @@ python scripts/build_promo.py config.json
 push-in from the wide frame, draws lower thirds, crossfades the shots and builds
 a closing card. Config schema is documented in `SKILL.md`.
 
-## Mode B — compose the film
+## Mode B — compose from captures
 
 ```bash
 # 1. capture the real UI (pick a backend)
@@ -113,6 +133,35 @@ python examples/film_example.py --plates examples/plates --out /tmp/frames
 ./scripts/encode.sh /tmp/frames /tmp/demo.mp4
 ```
 
+## Mode C — draw the idea
+
+When the film explains an idea rather than shows a product, draw it in the same
+compositor: a person who turns into a robot mid-stride, a pipeline whose edges
+draw themselves, an equation written on screen, bars that grow to the published
+numbers. Real plates (Mode B) sit beside the drawing wherever the real thing
+exists, such as a simulator render next to the schematic of the same idea.
+
+```python
+from explain_kit import tex, reveal, node, edge, bars, chart_map
+import walker
+
+lay, pts = walker.render("robot", phi, 1.0, 520, (W, H), 800, 620)   # phi integrated per frame
+img.alpha_composite(lay)
+reveal(img, tex(r"$v(t) = v_0\, e^{-t/\tau}$", 64), 130, 220, prog)
+node(img, (150, 330, 770, 610), "SERVER", "one process per core", prog, BLUE)
+edge(img, [(770, 420), (1150, 420)], prog, g, BLUE, label="REQUESTS")
+```
+
+```bash
+python film.py --probe intro:40,200 loop:140 --out probe.jpg   # look before the full render
+```
+
+For a film that makes claims (a paper, a benchmark, a results summary), put the
+numbers through a small data-prep script that reads the logs and asserts them
+against the published values, and ship a notes file saying where every shot and
+number comes from. `SKILL.md` covers the traps: feet that skate, walks that
+ghost across dissolves, clipped chart axes.
+
 ## What's in here
 
 | file | what it does |
@@ -123,12 +172,15 @@ python examples/film_example.py --plates examples/plates --out /tmp/frames
 | `scripts/capture_ui.py` | Mode B: capture a UI as PNG frames — `qt`, `web`, `x11` backends |
 | `scripts/plates.py` | cut footage into plates at the exact size the layout uses |
 | `scripts/promo_kit.py` | PIL toolkit: palettes, background, cards, captions, chips, effects, seam transitions, beat timeline, CLI (`--probe` puts chosen frames of chosen beats on one sheet) |
-| `scripts/explain_kit.py` | explainer films: typeset equations, diagram nodes and edges that draw themselves, animated bars with intervals, chart annotation map |
-| `scripts/walker.py` | a side-view person or humanoid robot walking, from one gait model, so one can turn into the other mid-stride |
+| `scripts/explain_kit.py` | Mode C: typeset equations, diagram nodes and edges that draw themselves, animated bars with intervals, chart annotation map |
+| `scripts/walker.py` | Mode C: a side-view person or humanoid robot walking, from one gait model, so one can turn into the other mid-stride |
 | `scripts/score.py` | synthesise an original, licence-free cue at the film's exact length |
 | `scripts/check_flicker.py` | numeric smoothness audit: flicker, judder, one-frame jolts |
 | `scripts/encode.sh` | PNG sequence → H.264 at sane settings |
 | `examples/` | a runnable 5-beat film, driver examples, clip/palette configs, sample-plate generator |
+
+The Mode B toolkit is also the base of Mode C: every call below works in an
+explainer.
 
 ### Finish, beyond the layout
 
@@ -175,28 +227,6 @@ python film.py --map          # prints every beat's start in seconds
 python scripts/score.py --seconds 75.0 \
     --cue arp=2.9,drums=7.8,hats16=41.8,riser=67.8 \
     --fills 7.6,14.8,25.0,41.6,52.4,64.0 --out score.wav
-```
-
-## Explainer films
-
-When the film explains an idea rather than shows a product, draw it in the same
-compositor: a person who turns into a robot mid-stride, a pipeline whose edges
-draw themselves, an equation written on screen, bars that grow to the published
-numbers.
-
-```python
-from explain_kit import tex, reveal, node, edge, bars, chart_map
-import walker
-
-lay, pts = walker.render("robot", phi, 1.0, 520, (W, H), 800, 620)   # phi integrated per frame
-img.alpha_composite(lay)
-reveal(img, tex(r"$v(t) = v_0\, e^{-t/\tau}$", 64), 130, 220, prog)
-node(img, (150, 330, 770, 610), "SERVER", "one process per core", prog, BLUE)
-edge(img, [(770, 420), (1150, 420)], prog, g, BLUE, label="REQUESTS")
-```
-
-```bash
-python film.py --probe intro:40,200 loop:140 --out probe.jpg   # look before the full render
 ```
 
 ## The failure modes it encodes
